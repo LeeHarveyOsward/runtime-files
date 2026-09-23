@@ -1,4 +1,4 @@
--- Release 4
+-- Release 5
 local supported={["Ahri"]=true,["Akali"]=true,["Ashe"]=true,["Blitzcrank"]=true,["Corki"]=true,["Ezreal"]=true,["Fiora"]=true,["Janna"]=true,["Katarina"]=true,["KogMaw"]=true,["Leona"]=true,["MasterYi"]=true,["MissFortune"]=true,["Pantheon"]=true,["Ryze"]=true,["Sivir"]=true,["Skarner"]=true,["Teemo"]=true,["Tristana"]=true,["Twitch"]=true,["Vayne"]=true}
 if not myHero or not supported[myHero.charName:match('^Jade_(.+)$') or ''] then return end
 if not SDK then print('[ClassicAIOv2] SDK required');return end
@@ -228,7 +228,7 @@ return function(env,hash,builtin,origin,package)
 end
 
 end)()
-client=create(_G,hash,4,"https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files",{names={'ClassicAIOv2'},channel='classic',cachePrefix='runtime-classic-'})
+client=create(_G,hash,5,"https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files",{names={'ClassicAIOv2'},channel='classic',cachePrefix='runtime-classic-'})
 _G.ClassicAIOv2ReleaseClient=client
 end
 return client:Boot("ClassicAIOv2",function()
@@ -10034,4 +10034,4 @@ if not ctx:Active() then return ctx end
 modules.runtime(ctx.env,champion)
 return ctx
 
-end,4)
+end,5)

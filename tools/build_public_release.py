@@ -12,9 +12,12 @@ from build_orbama_lua import render as orbama
 from build_lho import render_bundle as lho
 from build_classic_v2 import render as classic, CHAMPIONS
 
-VERSION=4
+VERSION=5
 ORIGIN='https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files'
 OUT=ROOT/'dist/public-runtime'
+
+def public_filename(component):
+    return 'ClassicAIO_Orbama.lua' if component=='ClassicAIOv2' else component+'.lua'
 
 def between(body,start,end,replacement):
     assert body.count(start)==1,start
@@ -125,7 +128,7 @@ def build():
         channel='classic' if name=='ClassicAIOv2' else 'release'
         manifests[channel]+=f'{name} {hashlib.sha256(data).hexdigest()} {len(data)} {zlib.adler32(data)}\n'
         files[f'{channel}/{VERSION}/{name}.lua']=data
-        files[name+'.lua']=bootstrap(name,body).encode('utf-8')
+        files[public_filename(name)]=bootstrap(name,body).encode('utf-8')
     for channel,manifest in manifests.items():files[channel+'/manifest']=manifest.encode()
     for channel in manifests:
         for path in (ROOT/channel).glob('*/*.lua'):
