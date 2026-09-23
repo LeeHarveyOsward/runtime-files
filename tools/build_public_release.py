@@ -11,7 +11,7 @@ sys.path.insert(0,str(ROOT/'tools'))
 from build_orbama_lua import render as orbama
 from build_lho import render_bundle as lho
 
-VERSION=2
+VERSION=3
 ORIGIN='https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files'
 OUT=ROOT/'dist/public-runtime'
 

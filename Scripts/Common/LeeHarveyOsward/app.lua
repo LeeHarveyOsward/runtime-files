@@ -203,6 +203,7 @@ end
 function App:tick()
     if not self.active then return end
     local c=self.ctx;c.actions:tick();c:refresh()
+    if c.config.bindings then c.config.bindings:sync() end
     -- A lethal objective gets the first legal cast opportunity before Q2,
     -- auto-leveling or ordinary combat can consume this tick's dispatcher.
     local previewInput=c.input:previewHeld() and (c.input:held('cursorKey') or c.input:held('allyKey'))

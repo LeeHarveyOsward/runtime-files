@@ -7,7 +7,7 @@ local drawingModes={{'Combo','Combo','COMBO','fight'},{'Harass','Harass','HARASS
 local drawingGroups={drawQRange='Q',drawWRange='W',drawERange='E',drawRRange='R',
     drawWardRange='WardRange',drawHUD='Status',drawWard='Wardjump',drawInsec='Insec',damageBars='Damage'}
 C.defaults={
-    guideOpen=false,guideKey=119,guidePreviousKey=33,guideNextKey=34,guidePage=1,guideScale=100,
+    guideOpen=false,guideKey=119,guidePreviousKey=118,guideNextKey=120,guidePage=1,guideScale=100,
     enabled=true,cursorKey=5,allyKey=6,wardKey=84,autoJungleKey=74,qAssistKey=71,smiteKey=78,secureKey=0,autoJungle=false,
     lastAbilities=true,lastQ=true,lastW=false,lastE=true,waveAbilities=true,waveQ=true,waveW=true,waveE=true,waveHarass=false,
     jungleAbilities=true,jungleQ=true,jungleQ2=true,jungleW=true,jungleE=true,jungleQ2MeleeOnly=true,jungleQ2RangeScale=2,
@@ -264,7 +264,7 @@ function C.new(profile)
         local iconFor=require('lho.menuicons').new()
         self.menu=MenuElement({type=MENU,id='LeeHarveyOsward_'..profile.id,name='Lee Harvey Osward'})
         self.menu:MenuElement({id='enabled',name='Enabled',value=true,leftIcon=iconFor('enabled')});self.nodes.enabled=self.menu.enabled
-        local groups={{'Guide','Guide / Hilfe'},{'Controls','Controls'},{'Combat','Combo'},{'Harass','Harass'},
+        local groups={{'Guide','Guide'},{'Controls','Controls'},{'Combat','Combo'},{'Harass','Harass'},
             {'Assists','Background assists'},{'Insec','Insec'},{'Wave','Waveclear'},
             {'LastHit','Last hit'},{'Jungle','Jungle clear'},{'Wardjump','Wardjump'},
             {'Farming','Auto-jungle'},{'SmiteItems','Smite and items'},{'Drawings','Drawings'}}
@@ -414,17 +414,31 @@ function C.new(profile)
             local args={id=key,name=label,value=self.values[key]}
             for k,v in pairs(extra or {}) do args[k]=v end
             if args.key then args.value=nil end
-            self.nodes[key]=add('Guide',args,'Guide.'..key)
+            local oldDefault=key=='guidePreviousKey' and 33 or key=='guideNextKey' and 34
+            if oldDefault then
+                -- Move saved r79 defaults to adjacent F keys, preserving custom
+                -- bindings and any deliberate choice saved under the new IDs.
+                args.id=key..'R80'
+                if migration then
+                    local root='LeeHarveyOsward_'..profile.id
+                    migration:Apply(args,root,'Guide.'..key,'Guide.'..args.id)
+                    local saved=migration.saved and migration.saved[root]
+                    local current=saved and saved.Guide and saved.Guide[args.id]
+                    if args.key==oldDefault and not (current and type(current.__key)=='number') then args.key=self.values[key] end
+                end
+            end
+            self.nodes[key]=add('Guide',args,'Guide.'..args.id,false,key)
         end
-        guide('guideOpen','Guide anzeigen / schliessen')
-        guide('guideKey','Guide oeffnen / schliessen',{key=self.values.guideKey})
-        guide('guidePage','Thema',{drop=require('lho.guide').titles})
-        guide('guidePreviousKey','Vorheriges Thema',{key=self.values.guidePreviousKey})
-        guide('guideNextKey','Naechstes Thema',{key=self.values.guideNextKey})
-        guide('guideScale','Textgroesse (%)',{min=80,max=150,step=5})
+        guide('guideOpen','Show / hide guide')
+        guide('guideKey','Open / close guide',{key=self.values.guideKey})
+        guide('guidePage','Topic',{drop=require('lho.guide').titles})
+        guide('guidePreviousKey','Previous topic',{key=self.values.guidePreviousKey})
+        guide('guideNextKey','Next topic',{key=self.values.guideNextKey})
+        guide('guideScale','Text size (%)',{min=80,max=150,step=5})
         -- Aliases preserve existing plugin button insertion without duplicate menu nodes.
         self.menu.Farm=self.menu.Farming;self.menu.Ward=self.menu.Wardjump;self.menu.Keys=self.menu.Controls
         self.menu.Smite=self.menu.SmiteItems
+        self.bindings=require('lho.bindings').new(self,_G.SDK)
     end
     self:set('autoJungle',false) -- Loading/reloading never starts an autonomous route.
     self:set('guideOpen',false) -- Help is temporary, never reopened by a saved toggle.
