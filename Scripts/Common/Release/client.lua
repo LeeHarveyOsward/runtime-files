@@ -1,5 +1,7 @@
-return function(env,hash,builtin,origin)
-    local names={'Orbama','LeeHarveyOsward'}
+return function(env,hash,builtin,origin,package)
+    local names=package and package.names or {'Orbama','LeeHarveyOsward'}
+    local channel=package and package.channel or 'release'
+    local prefix=package and package.cachePrefix or 'runtime-'
     local client={version=builtin,state='current',loaded={}}
     local function checksum(text)
         local a,b=1,0
@@ -11,7 +13,7 @@ return function(env,hash,builtin,origin)
     end
     local base=env.COMMON_PATH
     if type(base)=='string' and not base:match('[/\\]$') then base=base..'/' end
-    local function path(slot,name)return base..'runtime-'..slot..'-'..name end
+    local function path(slot,name)return base..prefix..slot..'-'..name end
     local function read(file,limit)
         local ok,value=pcall(function()
             local f=env.io.open(file,'rb');if not f then return end
@@ -30,12 +32,19 @@ return function(env,hash,builtin,origin)
     end
     local function parse(text)
         if type(text)~='string' or #text>512 then return end
-        local version,a,asize,acrc,b,bsize,bcrc=text:match('^R1\n(%d+)\nOrbama (%x+) (%d+) (%d+)\nLeeHarveyOsward (%x+) (%d+) (%d+)\n$')
-        version=tonumber(version);asize=tonumber(asize);bsize=tonumber(bsize);acrc=tonumber(acrc);bcrc=tonumber(bcrc)
-        if not version or version<1 or version>999999999 or #a~=64 or #b~=64
-            or asize<1 or bsize<1 or asize>4000000 or bsize>4000000
-            or acrc>4294967295 or bcrc>4294967295 then return end
-        return {version=version,text=text,Orbama={hash=a,size=asize,checksum=acrc},LeeHarveyOsward={hash=b,size=bsize,checksum=bcrc}}
+        local version,rest=text:match('^R1\n(%d+)\n(.*)$')
+        version=tonumber(version)
+        if not version or version<1 or version>999999999 then return end
+        local result={version=version,text=text}
+        for _,expected in ipairs(names)do
+            local name,digest,size,crc,remaining=rest:match('^(%w+) (%x+) (%d+) (%d+)\n(.*)$')
+            size=tonumber(size);crc=tonumber(crc)
+            if name~=expected or not digest or #digest~=64 or not size or size<1 or size>4000000
+                or not crc or crc>4294967295 then return end
+            result[name]={hash=digest,size=size,checksum=crc};rest=remaining
+        end
+        if rest~='' then return end
+        return result
     end
     local function validate(slot,manifest,pause)
         local chunks={}
@@ -86,7 +95,7 @@ return function(env,hash,builtin,origin)
     end
     local function begin()
         client.state='checking';nextCheck=now()+600
-        request(origin..'/main/release/manifest',function(text)
+        request(origin..'/main/'..channel..'/manifest',function(text)
             local manifest=parse(text)
             if not manifest then fail();return end
             if manifest.version<=client.version then client.state='current';return end
@@ -99,7 +108,7 @@ return function(env,hash,builtin,origin)
                     return
                 end
                 local item=manifest[name]
-                request(origin..'/main/release/'..manifest.version..'/'..name..'.lua',function(body)
+                request(origin..'/main/'..channel..'/'..manifest.version..'/'..name..'.lua',function(body)
                     job=coroutine.create(function()
                         if #body~=item.size or hash(body,coroutine.yield)~=item.hash or checksum(body)~=item.checksum
                             or not env.loadstring(body,'@update/'..name..'.lua') then fail();return end

@@ -1,0 +1,2 @@
+-- Adapter source moved to Scripts/Common/ActionClient/orbama.lua.
+-- Bundles embed the shared build_action_client.render() result.

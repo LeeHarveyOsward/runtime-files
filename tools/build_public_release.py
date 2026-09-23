@@ -10,8 +10,9 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tools'))
 from build_orbama_lua import render as orbama
 from build_lho import render_bundle as lho
+from build_classic_v2 import render as classic, CHAMPIONS
 
-VERSION=3
+VERSION=4
 ORIGIN='https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files'
 OUT=ROOT/'dist/public-runtime'
 
@@ -68,6 +69,27 @@ def orbama_module(name,body):
 ''')
     return body
 
+def classic_module(name,body):
+    if name=='core':
+        body=body.replace("version='2.1.8-dev'","version='2.1.8'")
+        body=between(body,'    function C:Trace(', '    local function point', '    function C:Trace()end\n')
+        body=body.replace('        if self.logger then pcall(self.logger.Close,self.logger,reason)end\n','')
+        body=body.replace('        local began=self.logger and g.GetTickCount()\n','')
+        body=between(body,'        if began then\n','        if not results[1]', '')
+        body=between(body,"        if self.logger and reason~='deduplicated'",'        if not id then','')
+        body=between(body,'            if self.logger then\n',"            if not r or r.state",'')
+        body=between(body,'                    -- A mechanical change can be real', '                    local receipt=', '')
+        body=between(body,"                            if self.logger then self:Trace('cast_observed'",'                            for _,fn', '')
+        body=between(body,"                if self.logger then self:Trace('cast_finished'",'                A:Finish', '')
+        body=between(body,'    local logOK,logger=',"    g.Callback.Add('Tick'",'')
+        body=between(body,'            if C.logger and not C.logger.failed then\n','        end\n    end)', '')
+        assert 'logger' not in body
+    if name=='bundle':
+        body=body.replace('Classic data; no runtime updates.','Classic data; release payload.')
+        body=between(body,' if not(active and active.active) then\n', ' if active and active.active', '')
+        body=re.sub(r'^\s*print\(["\']Classic AIO[^\n]+\n','\n',body,flags=re.M)
+    return body
+
 def payloads():
     provider=orbama(orbama_module)
     provider=between(provider,'if _G.OrbamaTestConfig==nil then', '\nlocal GameTimer', '')
@@ -75,33 +97,45 @@ def payloads():
     controller=lho(lho_module,omit=('logger','playtest','performance','telemetry'))
     prediction=(ROOT/'Scripts/Common/OrbamaPrediction/core.lua').read_text(encoding='utf-8')
     controller="if not myHero or (myHero.charName~='LeeSin' and myHero.charName~='Jade_LeeSin') then return end\nif not _G.GGPrediction then\n(function()\n"+prediction+"\nend)()\nend\n"+controller
-    return {'Orbama':provider,'LeeHarveyOsward':controller}
+    classic_body=classic(classic_module,omit=('diagnostics',))
+    classic_body="if SDK and SDK.OrbamaVersion and not _G.GGPrediction then\n(function()\n"+prediction+"\nend)()\nend\n"+classic_body
+    return {'Orbama':provider,'LeeHarveyOsward':controller,'ClassicAIOv2':classic_body}
 
 def bootstrap(name,payload):
     sha=(ROOT/'Scripts/Common/Release/sha256.lua').read_text(encoding='utf-8')
     client=(ROOT/'Scripts/Common/Release/client.lua').read_text(encoding='utf-8')
-    return ("-- Release "+str(VERSION)+"\nlocal client=_G.OrbamaReleaseClient\nif not client then\n"
+    is_classic=name=='ClassicAIOv2'
+    singleton='ClassicAIOv2ReleaseClient' if is_classic else 'OrbamaReleaseClient'
+    options=",{names={'ClassicAIOv2'},channel='classic',cachePrefix='runtime-classic-'}" if is_classic else ''
+    guard=''
+    if is_classic:
+        supported='{'+','.join('['+json.dumps(c)+']=true' for c in CHAMPIONS)+'}'
+        guard="local supported="+supported+"\nif not myHero or not supported[myHero.charName:match('^Jade_(.+)$') or ''] then return end\nif not SDK then print('[ClassicAIOv2] SDK required');return end\n"
+    return ("-- Release "+str(VERSION)+"\n"+guard+"local client=_G."+singleton+"\nif not client then\n"
         "local hash=(function()\n"+sha+"\nend)()\nlocal create=(function()\n"+client+
-        "\nend)()\nclient=create(_G,hash,"+str(VERSION)+","+json.dumps(ORIGIN)+")\n"
-        "_G.OrbamaReleaseClient=client\nend\nreturn client:Boot("+json.dumps(name)+",function()\n"+
+        "\nend)()\nclient=create(_G,hash,"+str(VERSION)+","+json.dumps(ORIGIN)+options+")\n"
+        "_G."+singleton+"=client\nend\nreturn client:Boot("+json.dumps(name)+",function()\n"+
         payload+"\nend,"+str(VERSION)+")\n")
 
 def build():
-    bodies=payloads();manifest='R1\n'+str(VERSION)+'\n'
+    bodies=payloads();manifests={name:'R1\n'+str(VERSION)+'\n' for name in ('release','classic')}
     files={}
     for name,body in bodies.items():
         data=body.encode('utf-8')
-        manifest+=f'{name} {hashlib.sha256(data).hexdigest()} {len(data)} {zlib.adler32(data)}\n'
-        files[f'release/{VERSION}/{name}.lua']=data
+        channel='classic' if name=='ClassicAIOv2' else 'release'
+        manifests[channel]+=f'{name} {hashlib.sha256(data).hexdigest()} {len(data)} {zlib.adler32(data)}\n'
+        files[f'{channel}/{VERSION}/{name}.lua']=data
         files[name+'.lua']=bootstrap(name,body).encode('utf-8')
-    files['release/manifest']=manifest.encode()
-    for path in (ROOT/'release').glob('*/*.lua'):
-        if path.parent.name.isdigit() and int(path.parent.name)<VERSION:
+    for channel,manifest in manifests.items():files[channel+'/manifest']=manifest.encode()
+    for channel in manifests:
+        for path in (ROOT/channel).glob('*/*.lua'):
+            if path.parent.name.isdigit() and int(path.parent.name)<VERSION:
+                files[path.relative_to(ROOT).as_posix()]=path.read_bytes()
+    for directory in ('Orbama','LeeHarveyOsward','ClassicAIOv2','ActionClient','ChampionMobility','CombatProfiles','OrbamaPrediction','Release'):
+        for path in (ROOT/'Scripts/Common'/directory).rglob('*'):
+            if not path.is_file() or path.suffix not in ('.lua','.json'):continue
             files[path.relative_to(ROOT).as_posix()]=path.read_bytes()
-    for directory in ('Orbama','LeeHarveyOsward','ActionClient','ChampionMobility','CombatProfiles','OrbamaPrediction','Release'):
-        for path in (ROOT/'Scripts/Common'/directory).glob('*.lua'):
-            files[path.relative_to(ROOT).as_posix()]=path.read_bytes()
-    for name in ('build_public_release.py','build_orbama_lua.py','build_lho.py','build_gg_test.py','build_action_client.py','orbama_patches.py'):
+    for name in ('build_public_release.py','build_orbama_lua.py','build_lho.py','build_classic_v2.py','build_gg_test.py','build_action_client.py','orbama_patches.py'):
         files['tools/'+name]=(ROOT/'tools'/name).read_bytes()
     files['reference/GGOrbwalker-3.075.lua']=(ROOT/'reference/GGOrbwalker-3.075.lua').read_bytes()
     for name,data in files.items():

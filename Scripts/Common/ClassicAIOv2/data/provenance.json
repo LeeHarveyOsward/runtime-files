@@ -1,0 +1,38 @@
+{
+  "mode": "Classic / Jade only",
+  "upstream_revision": "c50da708027ae23103b0c8c393a862fd6d0b628b",
+  "sources": "reference/ClassicAIO/manifest.json",
+  "verification": "Pinned source values, not revalidated against live gameplay or modern mode",
+  "champions": [
+    "Ahri",
+    "Akali",
+    "Ashe",
+    "Blitzcrank",
+    "Corki",
+    "Ezreal",
+    "Fiora",
+    "Janna",
+    "Katarina",
+    "KogMaw",
+    "Leona",
+    "MasterYi",
+    "MissFortune",
+    "Pantheon",
+    "Ryze",
+    "Sivir",
+    "Skarner",
+    "Teemo",
+    "Tristana",
+    "Twitch",
+    "Vayne"
+  ],
+  "normal_mode_substitution": false,
+  "properties": [
+    "damage",
+    "ranges",
+    "buff names",
+    "item IDs",
+    "spell states",
+    "attack resets"
+  ]
+}

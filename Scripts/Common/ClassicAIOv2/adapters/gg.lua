@@ -1,0 +1,2 @@
+-- Adapter source moved to Scripts/Common/ActionClient/gg.lua.
+-- Bundles embed the shared build_action_client.render() result.
