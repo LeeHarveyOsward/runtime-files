@@ -111,9 +111,18 @@ function U.sortedKeys(t)
     local keys={} for k in pairs(t) do keys[#keys+1]=k end
     table.sort(keys) return keys
 end
+local keyNames={[0]='Unbound',[1]='Mouse1',[2]='Mouse2',[4]='Mouse3',[5]='Mouse4',[6]='Mouse5',
+        [8]='Backspace',[9]='Tab',[13]='Enter',[16]='Shift',[17]='Ctrl',[18]='Alt',[20]='CapsLock',
+        [27]='Esc',[32]='Space',[33]='PgUp',[34]='PgDn',[35]='End',[36]='Home',
+        [37]='Left',[38]='Up',[39]='Right',[40]='Down',[45]='Insert',[46]='Delete',
+        [160]='LShift',[161]='RShift',[162]='LCtrl',[163]='RCtrl',[164]='LAlt',[165]='RAlt',
+        [186]=';',[187]='=',[188]=',',[189]='-',[190]='.',[191]='/',[192]='`',[219]='[',[220]='\\',[221]=']',[222]="'"}
 function U.keyLabel(key)
-    if key==32 then return 'Space' elseif key==5 then return 'Mouse4' elseif key==6 then return 'Mouse5' end
-    if key and key>=65 and key<=90 then return string.char(key) end
-    return tostring(key or 'unbound')
+    if not key then return 'Unbound' end
+    if keyNames[key] then return keyNames[key] end
+    if key>=48 and key<=57 or key>=65 and key<=90 then return string.char(key) end
+    if key>=112 and key<=135 then return 'F'..(key-111) end
+    if key>=96 and key<=105 then return 'Num'..(key-96) end
+    return 'Key '..tostring(key)
 end
 return U

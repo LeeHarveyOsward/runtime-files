@@ -85,7 +85,8 @@ function O:insecDrawing(i)
     local details=flash..'  |  '..(i.resource or 'Finding approach')
     if #details>66 then details=details:sub(1,63)..'...' end
     Draw.Text(details,13,x+12,y+31,amber)
-    Draw.Text(i.preview and 'Release ALT: confirm shown route' or i.confirmBlocked and 'Hold ALT to revise the plan'
+    local previewKey=U.keyLabel(c.config:key('insecPreviewKey'))
+    Draw.Text(i.preview and 'Release '..previewKey..': confirm shown route' or i.confirmBlocked and 'Hold '..previewKey..' to revise the plan'
         or 'Hold: continue   Right-click: move   Release: cancel',12,x+12,y+56,white)
 end
 function O:damageBars()
@@ -135,6 +136,7 @@ function O:ranges()
 end
 function O:draw()
     local c=self.ctx;if not Draw then return end
+    if c.guide and c.config:get('guideOpen') then c.guide:draw();return end
     -- Session heartbeat remains visible even if ordinary plugin drawings were
     -- disabled in a saved menu. It also reports file-write failure explicitly.
     if c.config:get('playtestLogging') then

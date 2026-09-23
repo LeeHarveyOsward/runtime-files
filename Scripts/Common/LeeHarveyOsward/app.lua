@@ -19,6 +19,7 @@ function App.new(options)
     c.actives=require('lho.actives').new(c,c.actions)
     c.damageModel=require('lho.damage').new(c)
     c.overlay=require('lho.overlay').new(c)
+    c.guide=require('lho.guide').new(c)
     c.telemetry=require('lho.telemetry').new(c)
     c.aim=c:playerPosition()
     return setmetatable({ctx=c,active=true,hooks={},build=require('lho.profiles').build},App)
@@ -153,6 +154,7 @@ end
 function App:event(msg,param)
     if not self.active then return end
     local c=self.ctx
+    if c.guide and c.guide:event(msg,param) then return end
     c.input:event(msg,param)
     if c.input.pressed.wardKey and c.input:held('wardKey') and not c.synthetic then
         c.input.wardContinuation=c.wards:retainCommitted()

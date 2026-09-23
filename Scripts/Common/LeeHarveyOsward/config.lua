@@ -7,6 +7,7 @@ local drawingModes={{'Combo','Combo','COMBO','fight'},{'Harass','Harass','HARASS
 local drawingGroups={drawQRange='Q',drawWRange='W',drawERange='E',drawRRange='R',
     drawWardRange='WardRange',drawHUD='Status',drawWard='Wardjump',drawInsec='Insec',damageBars='Damage'}
 C.defaults={
+    guideOpen=false,guideKey=119,guidePreviousKey=33,guideNextKey=34,guidePage=1,guideScale=100,
     enabled=true,cursorKey=5,allyKey=6,wardKey=84,autoJungleKey=74,qAssistKey=71,smiteKey=78,secureKey=0,autoJungle=false,
     lastAbilities=true,lastQ=true,lastW=false,lastE=true,waveAbilities=true,waveQ=true,waveW=true,waveE=true,waveHarass=false,
     jungleAbilities=true,jungleQ=true,jungleQ2=true,jungleW=true,jungleE=true,jungleQ2MeleeOnly=true,jungleQ2RangeScale=2,
@@ -243,7 +244,8 @@ function C.new(profile)
         wardJumpTimeout=true,insecDashEstimate=true,insecLead=true,smiteOverride=true,
         cancelOnly=true,smiteProjectionFallback=true,smitePreaim=true,
         insecAutoLead=true,insecLead=true,insecDashEstimate=true,farmRestoreCamera=true,
-        farmBuffRespawn=true,farmSmallRespawn=true,farmWightRespawn=true}
+        farmBuffRespawn=true,farmSmallRespawn=true,farmWightRespawn=true,
+        combatEstimates=true,laneEstimates=true,clearQTiming=true}
     local function destination(section,key)
         if section=='Validation' or developer[key] then return nil end
         if key:match('^insec') and key~='insecPreviewKey' then return 'Insec' end
@@ -259,43 +261,61 @@ function C.new(profile)
         return 'Farming'
     end
     if MenuElement then
+        local iconFor=require('lho.menuicons').new()
         self.menu=MenuElement({type=MENU,id='LeeHarveyOsward_'..profile.id,name='Lee Harvey Osward'})
-        self.menu:MenuElement({id='enabled',name='Enabled',value=true});self.nodes.enabled=self.menu.enabled
-        local groups={{'Controls','Controls'},{'Combat','Combo'},{'Harass','Harass'},
+        self.menu:MenuElement({id='enabled',name='Enabled',value=true,leftIcon=iconFor('enabled')});self.nodes.enabled=self.menu.enabled
+        local groups={{'Guide','Guide / Hilfe'},{'Controls','Controls'},{'Combat','Combo'},{'Harass','Harass'},
             {'Assists','Background assists'},{'Insec','Insec'},{'Wave','Waveclear'},
             {'LastHit','Last hit'},{'Jungle','Jungle clear'},{'Wardjump','Wardjump'},
             {'Farming','Auto-jungle'},{'SmiteItems','Smite and items'},{'Drawings','Drawings'}}
-        local icons={Controls='/Gamsteron_Loader.png',Combat='/Gamsteron_TargetSelector.png',Harass='/LeeSinQ.png',
-            Assists='/Gamsteron_Spell_SummonerBarrier.png',Insec='/Gamsteron_Spell_SummonerFlash.png',
-            Wave='/Gamsteron_Minion.png',LastHit='/Gold.png',Jungle='/Gamsteron_Spell_SummonerSmite.png',
-            Wardjump='/3340.png',Farming='/Gamsteron_Orbwalker.png',SmiteItems='/2003.png',Drawings='/Gamsteron_Drawings.png'}
-        local usedIcons={}
         for _,group in ipairs(groups) do
-            local resolver=_G.SDK and SDK.MenuMigration
-            local icon=resolver and resolver:Icon(icons[group[1]])
-            if icon and usedIcons[icon] then icon=nil end
-            if icon then usedIcons[icon]=true end
+            local icon=iconFor(group[1])
             local args={id=group[1],name=group[2],type=MENU,leftIcon=icon}
             local ok=pcall(self.menu.MenuElement,self.menu,args)
             if not ok and not self.menu[group[1]] then args.leftIcon=nil;self.menu:MenuElement(args) end
         end
         local migration=_G.SDK and SDK.MenuMigration
+        if not migration then
+            local ok,module=pcall(require,'Orbama.menus')
+            if ok then migration=module end
+        end
         self.drawingOptions={}
         local function drawingBranch(key)
             if drawingGroups[key] then return drawingGroups[key] end
             if key:match('^damage') then return 'Damage' end
             if key=='drawInsecTolerance' then return 'Insec' end
         end
-        local function add(group,args,oldPath,advanced)
+        local function add(group,args,oldPath,advanced,semanticKey)
+            local key=semanticKey or args.id
+            args.leftIcon=iconFor(key)
             local parent=self.menu[group];local path=group
             local branch=group=='Drawings' and drawingBranch(args.id)
             if branch then
                 local names={Damage='Damage estimates',Status='Status panel',WardRange='Ward range',Wardjump='Wardjump preview',Insec='Insec preview'}
                 if not parent[branch] then
-                    local icon=branch:match('^[QWER]$') and migration and migration:Icon('/LeeSin'..branch..'.png')
+                    local icon=iconFor(branch)
                     parent:MenuElement({id=branch,name=names[branch] or branch..' range',type=MENU,leftIcon=icon})
                 end
                 parent=parent[branch];path=path..'.'..branch
+            end
+            local priorPath=path
+            local category
+            if group=='Combat' then
+                if key:match('^combo[QWER]%d?$') or key=='q2Safety' or key=='hitchance' or key=='qOnlySelected' then category='Abilities'
+                elseif key:match('^comboWard') or key=='comboWalkWait' or key=='comboChaseE2' then category='Chase'
+                elseif key=='multi' or key=='multiHits' or key=='collateralKills' or key=='autoMultiR'
+                    or key=='comboConserveR' or key=='comboKickFollow' or key=='comboIsolate' then category='Finishes' end
+            elseif group=='Insec' then
+                if key:match('^insecFlash') then category='Flash'
+                elseif key=='insecQ' or key=='insecW' or key=='insecBridges' or key=='insecChains' or key=='insecCloseWard' then category='Resources'
+                elseif key=='aimLock' or key:match('^insecMouse') or key=='insecTrackAlly' or key=='insecPreferStructures' or key=='insecBasePlatform' then category='Targeting' end
+            elseif group=='SmiteItems' then
+                category=key:match('^potion') and 'Potions' or (key:match('^smite') or key=='autosmite') and 'Smite' or 'Items'
+            end
+            if category then
+                local names={Abilities='Abilities',Chase='Chase / ward use',Finishes='Kick / finishing',Resources='Approach tools',Targeting='Target / kick direction'}
+                if not parent[category] then parent:MenuElement({id=category,name=names[category] or category,type=MENU,leftIcon=iconFor(category)}) end
+                parent=parent[category];path=path..'.'..category
             end
             if advanced then
                 if not parent.Advanced then parent:MenuElement({id='Advanced',name='Advanced',type=MENU}) end
@@ -303,6 +323,7 @@ function C.new(profile)
             end
             if migration then
                 migration:Apply(args,'LeeHarveyOsward_'..profile.id,oldPath,path..'.'..args.id)
+                if category then migration:Apply(args,'LeeHarveyOsward_'..profile.id,priorPath..(advanced and '.Advanced' or '')..'.'..args.id,path..'.'..args.id) end
                 if args.id:match('^draw[QWER]Range') or args.id=='drawWardRange' then
                     migration:Apply(args,'LeeHarveyOsward_'..profile.id,'Drawings.Ranges.'..args.id,path..'.'..args.id)
                 end
@@ -338,10 +359,23 @@ function C.new(profile)
             end
             parent:MenuElement(args);return parent[args.id]
         end
-        local labels={cursorKey='Cursor insec',allyKey='Ally insec',insecPreviewKey='Preview modifier',
-            wardApproach='Approach after release',wardFollowCursor='Move after jump',insecFlashFallback='Flash fallback',
+        local labels={cursorKey='Hold: kick toward cursor',allyKey='Hold: kick toward team / turret',insecPreviewKey='Hold for preview; release to confirm',
+            wardKey='Hold: aim wardjump / release: jump',qAssistKey='Hold: Q1 assist',secureKey='Hold: Q + Smite objective assist',
+            wardApproach='Walk into jump range after release',wardFollowCursor='Move toward cursor after jump',insecFlashFallback='Without preview: Flash only with no ready ward',
             farmCameraKey='Camera lock key',combatEstimates='Conservative damage estimates',
-            laneEstimates='Conservative lane damage',insecMouseTarget='Mouse target fallback'}
+            laneEstimates='Conservative lane damage',insecMouseTarget='No selection: use enemy near cursor',
+            insecPreferStructures='Prefer landing inside friendly turret range',insecBasePlatform='Also consider our base platform',
+            insecTrackAlly='Track ally until direction locks',insecCloseWard='Allow a closer ward for a valid kick',
+            insecBridges='Use other units as Q stepping stones',insecChains='Combine Q, W and allowed Flash',
+            multiHits='Minimum total champions hit',autoMultiR='Also kick while idle, without repositioning',
+            comboKickFollow='Follow a duel kick with marked Q2',comboIsolate='Kick a marked enemy away from their team',
+            comboPassive='Weave passive attacks',comboBurst='Prioritize a lethal finish',
+            expiryW='Use W2 before it expires',expiryE='Use E2 before expiry if a marked enemy is nearby',
+            waveSoften='Damage healthy minions when last hits stay safe',laneDamageMargin='Extra lane damage margin (%)',
+            farmQBlind='Q-probe known camps in fog',farmQRespawn='Allow a fog probe after estimated respawn',
+            jungleQ2MeleeOnly='Save long-range Q2 for travel',jungleQ2RangeScale='Clearing Q2 range / attack range',
+            damageText='Show estimated damage numbers',damageMax='Estimate with maximum allowed resources',
+            damageSafe='Show conservative estimate',insecOrbwalk='Attack and move while waiting for an approach'}
         for _,section in ipairs(sections) do
             for _,row in ipairs(section[3]) do
                 local key=row[1];local group=destination(section[1],key)
@@ -368,19 +402,32 @@ function C.new(profile)
                     elseif key=='drawQRange' then args.drop={'Off','During harass','Always'}
                     elseif row[4] then args.min=row[4];args.max=row[5];args.step=1 end
                     local advanced=group~='Controls' and row[4]~=nil
-                    self.nodes[key]=add(group,args,section[1]..'.'..args.id,advanced)
+                    self.nodes[key]=add(group,args,section[1]..'.'..args.id,advanced,key)
                 end
             end
         end
-        self.nodes.aimLock=add('Insec',{id='aimLock',name='Aim lock',value=self.values.aimLock,drop={'On press','On commitment','Until kick'}},'Combat.aimLock')
+        self.nodes.aimLock=add('Insec',{id='aimLock',name='Lock kick direction',value=self.values.aimLock,drop={'On press','When approach commits','Keep tracking until kick'}},'Combat.aimLock')
         self.nodes.openingRoute=add('Farming',{id='openingRouteR15',name='Opening route',value=self.values.openingRoute,
             drop={'Adaptive','Red start','Blue start'}},'Farm.openingRouteR15')
-        self.menu:MenuElement({id='draw',name='Drawings enabled',value=self.values.draw});self.nodes.draw=self.menu.draw
+        self.menu:MenuElement({id='draw',name='Drawings enabled',value=self.values.draw,leftIcon=iconFor('draw')});self.nodes.draw=self.menu.draw
+        local function guide(key,label,extra)
+            local args={id=key,name=label,value=self.values[key]}
+            for k,v in pairs(extra or {}) do args[k]=v end
+            if args.key then args.value=nil end
+            self.nodes[key]=add('Guide',args,'Guide.'..key)
+        end
+        guide('guideOpen','Guide anzeigen / schliessen')
+        guide('guideKey','Guide oeffnen / schliessen',{key=self.values.guideKey})
+        guide('guidePage','Thema',{drop=require('lho.guide').titles})
+        guide('guidePreviousKey','Vorheriges Thema',{key=self.values.guidePreviousKey})
+        guide('guideNextKey','Naechstes Thema',{key=self.values.guideNextKey})
+        guide('guideScale','Textgroesse (%)',{min=80,max=150,step=5})
         -- Aliases preserve existing plugin button insertion without duplicate menu nodes.
         self.menu.Farm=self.menu.Farming;self.menu.Ward=self.menu.Wardjump;self.menu.Keys=self.menu.Controls
         self.menu.Smite=self.menu.SmiteItems
     end
     self:set('autoJungle',false) -- Loading/reloading never starts an autonomous route.
+    self:set('guideOpen',false) -- Help is temporary, never reopened by a saved toggle.
     return self
 end
 return C

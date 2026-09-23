@@ -51,6 +51,8 @@ def render_bundle(transform=None, omit=()):
         if transform: body=transform(file.stem,body)
         lines.append('modules["lho.'+file.stem+'"] = function(require)\n'+body+'\nend\n')
     from build_action_client import render as render_client
+    lines.append('modules["Orbama.menus"] = function(require)\n'+
+                 (ROOT/'Scripts/Common/Orbama/menus.lua').read_text(encoding='utf-8')+'\nend\n')
     lines.append('modules["ActionClient"] = function(require)\n'+render_client()+'\nend\n')
     for file in sorted((ROOT/'Scripts/Common/ChampionMobility').glob('*.lua')):
         lines.append('modules["ChampionMobility.'+file.stem+'"] = function(require)\n'+file.read_text(encoding='utf-8')+'\nend\n')

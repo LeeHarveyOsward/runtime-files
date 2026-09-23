@@ -11,7 +11,7 @@ sys.path.insert(0,str(ROOT/'tools'))
 from build_orbama_lua import render as orbama
 from build_lho import render_bundle as lho
 
-VERSION=1
+VERSION=2
 ORIGIN='https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files'
 OUT=ROOT/'dist/public-runtime'
 
@@ -95,6 +95,9 @@ def build():
         files[f'release/{VERSION}/{name}.lua']=data
         files[name+'.lua']=bootstrap(name,body).encode('utf-8')
     files['release/manifest']=manifest.encode()
+    for path in (ROOT/'release').glob('*/*.lua'):
+        if path.parent.name.isdigit() and int(path.parent.name)<VERSION:
+            files[path.relative_to(ROOT).as_posix()]=path.read_bytes()
     for directory in ('Orbama','LeeHarveyOsward','ActionClient','ChampionMobility','CombatProfiles','OrbamaPrediction','Release'):
         for path in (ROOT/'Scripts/Common'/directory).glob('*.lua'):
             files[path.relative_to(ROOT).as_posix()]=path.read_bytes()
