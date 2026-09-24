@@ -14,8 +14,11 @@ The installer detects a running program with an adjacent
 `GamingOnSteroids/LOLEXT/Scripts` directory, regardless of program name or extension.
 If several installations match, choose one. If none match, select the
 `GamingOnSteroids` folder in the folder picker or enter its path.
-Inaccessible process paths are skipped; administrator access is not requested
-automatically. You can select the folder even when the host is not running.
+When WMI omits an executable path, the installer tries Windows'
+`QueryFullProcessImageNameW` API with limited query access. This can find hosts
+whose paths WMI hides without requesting administrator access. If both methods
+are denied, the folder picker remains available. You can also select the folder
+when the host is not running.
 
 Files are installed beneath that folder. Selected loader scripts are registered
 with `ACTIVE = 1` in `LOLEXT/LocalScriptDB.ini`. New sections have a blank `UPDATE =`

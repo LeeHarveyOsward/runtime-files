@@ -59,15 +59,65 @@ function Get-RuntimePath([string]$Base, [string]$Relative) {
     return $path
 }
 
+function Get-RuntimeProcessPath([int]$ProcessId) {
+    if ($ProcessId -le 0 -or $script:RuntimeProcessQueryUnavailable) { return $null }
+    try {
+        if (!('RuntimeFiles.InstallerProcessPath' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+namespace RuntimeFiles {
+    public static class InstallerProcessPath {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint access, bool inherit, int processId);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags,
+            StringBuilder name, ref uint size);
+        [DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr handle);
+        public static string Read(int processId) {
+            // PROCESS_QUERY_LIMITED_INFORMATION, no memory access or elevation.
+            IntPtr handle = OpenProcess(0x1000, false, processId);
+            if (handle == IntPtr.Zero) return null;
+            try {
+                uint size = 32768;
+                var name = new StringBuilder((int)size);
+                return QueryFullProcessImageNameW(handle, 0, name, ref size)
+                    ? name.ToString() : null;
+            } finally { CloseHandle(handle); }
+        }
+    }
+}
+'@ -ErrorAction Stop
+        }
+    } catch {
+        $script:RuntimeProcessQueryUnavailable = $true
+        Write-Verbose "Native process path query unavailable: $_"
+        return $null
+    }
+    try { return [RuntimeFiles.InstallerProcessPath]::Read($ProcessId) }
+    catch { return $null }
+}
+
 function Get-RuntimeInstallations($Processes) {
     if ($null -eq $Processes) {
-        $Processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+        try { $Processes = @(Get-CimInstance Win32_Process -ErrorAction Stop) }
+        catch { $Processes = @() }
+        if (!$Processes.Count) {
+            $Processes = @([Diagnostics.Process]::GetProcesses() | ForEach-Object {
+                try { [pscustomobject]@{ProcessId=$_.Id; ExecutablePath=$null} }
+                finally { $_.Dispose() }
+            })
+        }
     }
     $found = @{}
     foreach ($process in $Processes) {
-        if (!$process.ExecutablePath) { continue }
         try {
-            $candidate = Join-Path ([IO.Path]::GetDirectoryName($process.ExecutablePath)) 'GamingOnSteroids'
+            $executable = $process.ExecutablePath
+            if (!$executable) { $executable = Get-RuntimeProcessPath $process.ProcessId }
+            if (!$executable) { continue }
+            $candidate = Join-Path ([IO.Path]::GetDirectoryName($executable)) 'GamingOnSteroids'
             if (Test-Path -LiteralPath (Join-Path $candidate 'LOLEXT/Scripts') -PathType Container) {
                 $candidate = [IO.Path]::GetFullPath($candidate)
                 $found[$candidate] = $candidate
@@ -91,7 +141,7 @@ function Select-RuntimeRoot([string]$Requested, [bool]$Quiet) {
             }
             $Requested = $candidates[$index-1]
         } else {
-            Write-Host 'No running host installation found. Select the GamingOnSteroids folder.'
+            Write-Host 'Could not determine the installation folder from running processes. Select the GamingOnSteroids folder.'
             try {
                 Add-Type -AssemblyName System.Windows.Forms
                 $picker = New-Object Windows.Forms.FolderBrowserDialog

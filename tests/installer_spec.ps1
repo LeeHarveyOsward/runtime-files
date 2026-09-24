@@ -25,6 +25,21 @@ try {
     )
     $found = @(Get-RuntimeInstallations $processes)
     Assert ($found.Count -eq 2 -and $root -in $found -and $other -in $found) 'Extension-independent detection and deduplication'
+    # WMI often exposes the PID but omits ExecutablePath for the running host.
+    $nativePath = Get-RuntimeProcessPath $PID
+    Assert ($nativePath -and [IO.Path]::GetFileName($nativePath) -eq 'powershell.exe') 'Actual limited-information native path query'
+    Assert (!(Get-RuntimeProcessPath 2147483647)) 'Exited or inaccessible native process is skipped'
+    $originalQuery = ${function:Get-RuntimeProcessPath}
+    function Get-RuntimeProcessPath([int]$ProcessId) {
+        if ($ProcessId -eq 12345) { return Join-Path $sandbox 'host/random.exec' }
+        return $null
+    }
+    try {
+        $missingPaths = @([pscustomobject]@{ProcessId=12345; ExecutablePath=$null},
+                         [pscustomobject]@{ProcessId=23456; ExecutablePath=$null})
+        $found = @(Get-RuntimeInstallations $missingPaths)
+        Assert ($found.Count -eq 1 -and $found[0] -eq $root) 'Missing WMI path uses native fallback'
+    } finally { ${function:Get-RuntimeProcessPath} = $originalQuery }
     Assert ((Select-RuntimeRoot $root $true) -eq $root) 'Explicit root'
     Throws { Select-RuntimeRoot $sandbox $true } 'Not an installation'
     foreach ($path in @('../escape','LOLEXT/../escape','C:/evil','/absolute','LOLEXT/Scripts/a:stream','LOLEXT/Scripts/CON.lua','LOLEXT/Scripts/x.','LOLEXT\Scripts\x')) {
