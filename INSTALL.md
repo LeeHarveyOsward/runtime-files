@@ -9,7 +9,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.gith
 The command executes this repository's PowerShell installer. It needs Windows
 PowerShell 5.1 and HTTPS access to GitHub. No Git or Python installation is needed.
 
-Choose the scripts you want. Required dependencies are included automatically.
+All published script packages and their dependencies are installed and enabled
+automatically. There is no script selection menu or confirmation prompt on success.
 The installer detects a running program with an adjacent
 `GamingOnSteroids/LOLEXT/Scripts` directory, regardless of program name or extension.
 If several installations match, choose one. If none match, select the
@@ -20,7 +21,7 @@ whose paths WMI hides without requesting administrator access. If both methods
 are denied, the folder picker remains available. You can also select the folder
 when the host is not running.
 
-Files are installed beneath that folder. Selected loader scripts are registered
+Files are installed beneath that folder. Package loader scripts are registered
 with `ACTIVE = 1` in `LOLEXT/LocalScriptDB.ini`. New sections have a blank `UPDATE =`
 line for compatibility. Existing `UPDATE` values and unrelated settings are kept.
 The Lua scripts retain their own autoupdaters.
@@ -35,9 +36,9 @@ Reload the complete script runtime yourself after installation. The installer
 does not stop any process or reload scripts. Newly copied files are not proof
 that the running game has loaded them.
 
-Run the same command again to update installed packages or add packages. The
-installer remembers packages in `.runtime-files/installed.json`. Existing managed
-packages are updated together to the selected publication. A locally modified
+Run the same command again to update all packages and install any newly published
+packages. The installer records packages in `.runtime-files/installed.json`.
+Managed packages are updated together to the selected publication. A locally modified
 managed file is backed up before replacement. Unrelated files are preserved.
 
 ## Versions and recovery
@@ -59,7 +60,7 @@ For explicit paths, automation, or rollback, download `install.ps1` and run it
 from PowerShell:
 
 ```powershell
-.\install.ps1 -Root 'C:\path\GamingOnSteroids' -Packages lho,classic
+.\install.ps1 -Root 'C:\path\GamingOnSteroids'
 .\install.ps1 -Root 'C:\path\GamingOnSteroids' -Rollback
 .\install.ps1 -DetectOnly
 ```
@@ -67,7 +68,9 @@ from PowerShell:
 `-Rollback` restores the most recent installation transaction, including loader
 settings. It refuses to overwrite files changed since that transaction. Use the
 reported backup directory for manual recovery if needed. `-NonInteractive`
-requires an unambiguous destination and explicit packages, or an existing receipt.
+requires an unambiguous destination and installs all packages by default.
+Advanced callers can explicitly pass `-Packages lho,classic` to restrict a new
+installation. Previously managed packages are still included when updating.
 
 ## Adding packages
 

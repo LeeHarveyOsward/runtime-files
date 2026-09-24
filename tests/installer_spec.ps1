@@ -152,6 +152,24 @@ try {
     $null = New-Item -ItemType Junction -Path $junction -Target $source
     try { Throws { Get-RuntimePath $recoveryRoot 'LOLEXT/Sprites/asset.png' } 'Linked paths' }
     finally { [IO.Directory]::Delete($junction) }
+    # Default runs never ask for package selection, and future packages are
+    # included even when a receipt from an earlier publication already exists.
+    function Read-Host([string]$Prompt) { throw "Unexpected prompt: $Prompt" }
+    $allRoot = Make-Root 'automatic/GamingOnSteroids'
+    Invoke-RuntimeInstaller -Root $allRoot -SourceRoot $source
+    $allReceipt = Join-Path $allRoot '.runtime-files/installed.json'
+    Assert ((Get-Content -LiteralPath $allReceipt -Raw | ConvertFrom-Json).packages.Count -eq 2) 'Fresh default installs every package without prompts'
+    $bonus = [Text.Encoding]::UTF8.GetBytes('-- new independent package')
+    [IO.File]::WriteAllBytes((Join-Path $source 'Bonus.lua'), $bonus)
+    $manifest.packages += [pscustomobject]@{id='bonus'; name='Bonus'; version='2'; depends=@(); enable=@('Bonus.lua'); disable=@();
+        files=@([pscustomobject]@{source='Bonus.lua'; destination='LOLEXT/Scripts/Bonus.lua'; size=$bonus.Length; sha256=(Get-RuntimeHash $bonus)})}
+    Write-RuntimeJson (Join-Path $source 'installer-manifest.json') $manifest
+    Invoke-RuntimeInstaller -Root $allRoot -SourceRoot $source
+    Assert ((Get-Content -LiteralPath $allReceipt -Raw | ConvertFrom-Json).packages.Count -eq 3) 'Default update adds newly published packages'
+    Assert ((Get-Content -LiteralPath (Join-Path $allRoot 'LOLEXT/LocalScriptDB.ini') -Raw) -match '\[Bonus.lua\]\r?\nACTIVE = 1') 'New package enabled automatically'
+    $quietRoot = Make-Root 'noninteractive/GamingOnSteroids'
+    Invoke-RuntimeInstaller -Root $quietRoot -SourceRoot $source -NonInteractive
+    Assert ((Get-Content -LiteralPath (Join-Path $quietRoot '.runtime-files/installed.json') -Raw | ConvertFrom-Json).packages.Count -eq 3) 'Fresh noninteractive run defaults to all packages'
     Write-Host "PASS: $script:count installer assertions"
 } finally {
     $resolved = [IO.Path]::GetFullPath($sandbox)

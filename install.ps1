@@ -376,7 +376,7 @@ function Invoke-RuntimeInstaller {
             }
         } else { $SourceRoot = [IO.Path]::GetFullPath($SourceRoot); if (!$Commit) { $Commit = 'local-test' } }
         $manifest = [Text.Encoding]::UTF8.GetString((Get-RuntimeBytes 'installer-manifest.json' $SourceRoot $Commit)) | ConvertFrom-Json
-        # Validate the catalog before displaying or selecting packages.
+        # Validate the catalog before resolving package dependencies.
         $null = Resolve-RuntimePackages $manifest @($manifest.packages.id)
         $receiptPath = Get-RuntimePath $rootPath '.runtime-files/installed.json'
         $receiptHash = Get-RuntimeFileHash $receiptPath
@@ -387,26 +387,7 @@ function Invoke-RuntimeInstaller {
             $previous = @($receipt.packages | ForEach-Object { $_.id })
         }
         if (!$Packages) {
-            if ($NonInteractive) {
-                if (!$previous.Count) { throw 'Specify -Packages for a new noninteractive installation.' }
-                $Packages = $previous
-            } else {
-                Write-Host 'Select scripts. Required dependencies are included automatically.'
-                $options = @($manifest.packages)
-                for ($i = 0; $i -lt $options.Count; $i++) { Write-Host "[$($i+1)] $($options[$i].name)" }
-                if ($previous.Count) { Write-Host '[U] Update installed packages' }
-                $choice = Read-Host 'Enter numbers separated by commas (blank cancels)'
-                if (!$choice) { throw 'Installation cancelled.' }
-                if ($choice -eq 'u' -and $previous.Count) { $Packages = $previous }
-                else {
-                    $Packages = @()
-                    foreach ($value in ($choice -split '[,\s]+' | Where-Object { $_ })) {
-                        $index = 0
-                        if (![int]::TryParse($value, [ref]$index) -or $index -lt 1 -or $index -gt $options.Count) { throw 'Invalid package selection.' }
-                        $Packages += $options[$index-1].id
-                    }
-                }
-            }
+            $Packages = @($manifest.packages.id)
         }
         $selected = @(Resolve-RuntimePackages $manifest @($Packages + $previous | Select-Object -Unique))
         if (!$selected.Count) { throw 'No packages selected.' }
@@ -455,7 +436,6 @@ if (!$LibraryOnly) {
     } catch {
         if ($NonInteractive) { throw }
         Write-Host "Installer stopped: $_" -ForegroundColor Red
-    } finally {
-        if (!$NonInteractive -and !$DetectOnly) { $null = Read-Host 'Press Enter to close' }
+        if (!$DetectOnly) { $null = Read-Host 'Press Enter to close' }
     }
 }
