@@ -64,7 +64,7 @@ return ctx
 if __name__=='__main__':
     (ROOT/'experiments/build').mkdir(parents=True,exist_ok=True)
     OUT.write_text(render(),encoding='utf-8',newline='\n')
-    manifest={'version':'2.1.8-dev','champions':CHAMPIONS,'artifact_sha256':hashlib.sha256(OUT.read_bytes()).hexdigest(),
+    manifest={'version':'2.1.11-dev','champions':CHAMPIONS,'artifact_sha256':hashlib.sha256(OUT.read_bytes()).hexdigest(),
         'sources':{str(p.relative_to(SRC)).replace('\\','/'):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(SRC.rglob('*.lua'))},'live_verified':False,'shared_action_client_sha256':hashlib.sha256(action_client().encode('utf-8')).hexdigest(),
         'shared_classic_vayne_sha256':hashlib.sha256((ROOT/'Scripts/Common/CombatProfiles/classic_vayne.lua').read_bytes()).hexdigest()}
     (ROOT/'experiments/build/classic-v2-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')

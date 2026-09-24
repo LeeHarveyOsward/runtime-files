@@ -81,7 +81,7 @@ function ClassicTeemo:Harass()
 end
 
 function ClassicTeemo:CastR(t)
-	local p = GGPrediction:SpellPrediction(self.RSpell)
+	local p = V2:Prediction(self.RSpell)
 	p:GetPrediction(t, myHero)
 	if not p:CanHit(2) then return false end
 	if self.lastRPos and GetTickCount() - self.lastRTime < 3000 and GetDistance(self.lastRPos, p.CastPosition) < 150 then return false end

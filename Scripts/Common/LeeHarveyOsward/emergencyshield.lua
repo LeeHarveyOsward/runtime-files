@@ -34,10 +34,10 @@ function E:packet(missile,lead)
         or not U.position(missile.pos) or not U.finite(d.speed) or d.speed<=0 then return end
     local name=U.name(d.name)
     if not name:find('basicattack',1,true) and not name:find('critattack',1,true) then return end
-    local source=self:source(d.owner)
-    if not source or not c.sdk.Damage or not c.sdk.Damage.GetAutoAttackDamage then return end
     local remaining=math.max(0,U.dist(missile.pos,myHero.pos)-(myHero.boundingRadius or 0))/d.speed
     if remaining<=0 or remaining>lead then return end
+    local source=self:source(d.owner)
+    if not source or not c.sdk.Damage or not c.sdk.Damage.GetAutoAttackDamage then return end
     local ok,damage=pcall(c.sdk.Damage.GetAutoAttackDamage,c.sdk.Damage,source,myHero)
     if not ok or not U.finite(damage) or damage<=0 then return end
     return {id=U.id(missile),source=U.id(source),damage=damage,remaining=remaining}

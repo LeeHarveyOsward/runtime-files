@@ -10,7 +10,7 @@ from orbama_patches import correctness
 from build_action_client import render as action_client
 
 OUT = ROOT / 'Scripts/Orbama.lua'
-BUILD = 'Orbama-lua-45'
+BUILD = 'Orbama-lua-47'
 MODULES = ROOT / 'Scripts/Common/Orbama'
 
 def module(name):
@@ -156,7 +156,8 @@ end
     source=replace(source, 'local issued = Cursor:Add(AttackKey:Key(), target)', 'local issued\n            if actionRecord then issued=Cursor:DispatchRecord(actionRecord,AttackKey:Key(),target)\n            else issued=Cursor:Add(AttackKey:Key(),target) end')
     source = replace(source, '\t\t\tCastKey(key)\n\t\t\treturn true', '\t\t\treturn Cursor:SendKeys(key, "control")')
     source = replace(source, '\t\t\tCursor:Add(MOUSEEVENTF_RIGHTDOWN, pos)\n\t\telseif not a then', '\t\t\tif not Cursor:Add(MOUSEEVENTF_RIGHTDOWN, pos) then return false end\n\t\telseif not a then')
-    source = replace(source, '\t\t\tCastKey(MOUSEEVENTF_RIGHTDOWN)', '\t\t\tif not Cursor:Add(MOUSEEVENTF_RIGHTDOWN, Cursor:GetPlayerPosition()) then return false end')
+    source = replace(source, '\t\t\tCastKey(MOUSEEVENTF_RIGHTDOWN)', '\t\t\tif not Cursor:MoveAtCursor() then return false end')
+    source = replace(source, '\t\t\tlocal unit = Game.GetUnderMouseObject()\n\t\t\tif unit and unit.isEnemy and unit.isTargetable then\n\t\t\t\treturn false\n\t\t\tend\n', '')
     # Internal intent consumers must never read the temporarily displaced world cursor.
     source = source.replace('Vector(mousePos)', 'Vector(Cursor:GetPlayerPosition())')
     source = source.replace('GetDistance(mousePos,', 'GetDistance(Cursor:GetPlayerPosition(),')

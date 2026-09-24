@@ -84,16 +84,20 @@ function I:needsShield(range)
     return false
 end
 function I:defenseAllowed(slot)
-    local c=self.ctx;local item=myHero:GetItemData(slot);local rule=item and self:rule(item.itemID)
-    if not c.config:get('items') or not c.config:get('idleDefense') or not rule or not c.config:get(rule.group) then return false end
+    local c=self.ctx
+    if not c.config:get('items') or not c.config:get('idleDefense') then return false end
+    local item=myHero:GetItemData(slot);local rule=item and self:rule(item.itemID)
+    if not rule or not c.config:get(rule.group) then return false end
     if rule.cleanse and self.actions.capabilities and self.actions.capabilities.automationClaims then
         self.actions:syncAutomation()
         if not self.actions.qssClaim then return false end
     end
+    if not c:ready(slot) then return false end
     return rule.cleanse and self:needsCleanse() or rule.shield and self:needsShield(rule.range)
         or rule.group=='itemSlow' and U.hp(myHero)<=c.config:get('shieldHP') and c:threats(myHero.pos,rule.range)>0
 end
 function I:defense(owner)
+    if not self.ctx.config:get('items') or not self.ctx.config:get('idleDefense') then return false end
     for slot=6,11 do
         if self:defenseAllowed(slot) and self.actions:cast(slot,nil,owner or 'defense',{interrupt=true,
             validate=function()return self:defenseAllowed(slot),'defense_no_longer_needed' end}) then return true end
@@ -105,7 +109,7 @@ function I:itemAllowed(slot,target)
     if not c.config:get('items') or not U.valid(target) or c:dash() or c.sdk.Orbwalker:IsAutoAttacking() then return false end
     local champion=target.team~=300 and target.team~=myHero.team and target.type==myHero.type
     local item=myHero:GetItemData(slot);local rule=item and self:rule(item.itemID)
-    if not rule or not c.config:get(rule.group) or rule.cleanse or rule.shield or rule.champion and not champion
+    if not rule or not c.config:get(rule.group) or rule.cleanse or rule.shield or rule.champion and not champion or not c:ready(slot)
         or U.dist(myHero.pos,target.pos)>rule.range then return false end
     local useful=true
     if rule.reset then useful=c.lastAttackFinished and c:now()-c.lastAttackFinished<.3 and U.dist(myHero.pos,target.pos)<=c:attackRange(target) end
@@ -114,6 +118,7 @@ function I:itemAllowed(slot,target)
     return useful,rule
 end
 function I:tick(target,owner)
+    if not self.ctx.config:get('items') then return false end
     for slot=6,11 do
         local useful,rule=self:itemAllowed(slot,target)
         if useful and self.actions:cast(slot,rule.targeted and target or nil,owner,{intendedTarget=target,

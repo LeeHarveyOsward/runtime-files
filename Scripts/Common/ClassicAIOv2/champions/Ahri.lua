@@ -146,9 +146,12 @@ end
 function ClassicAhri:Clear()
 	if not Menu.Clear.Enabled:Value() then return end
 	if myHero.maxMana > 0 and myHero.mana / myHero.maxMana * 100 < Menu.Clear.Mana:Value() then return end
-	if not IsUnderTurret(myHero) then
-		local minions = _G.SDK.ObjectManager:GetEnemyMinions(self.QSpell.Range)
-		if Menu.Clear.Q:Value() > 0 and IsReady(_Q) then
+	local qReady, wReady = IsReady(_Q), IsReady(_W) and lastW + 250 < GetTickCount()
+	if not qReady and not wReady then return end
+	local laneQ, laneW = Menu.Clear.Q:Value() > 0 and qReady, Menu.Clear.W:Value() > 0 and wReady
+	if (laneQ or laneW) and not IsUnderTurret(myHero) then
+		if laneQ then
+			local minions = _G.SDK.ObjectManager:GetEnemyMinions(self.QSpell.Range)
 			for _, minion in ipairs(minions) do
 				if IsValid(minion) and minion.team ~= 300 and minion.pos2D.onScreen and minion.distance <= self.QSpell.Range and GetMinionCount(180, minion.pos) >= Menu.Clear.Q:Value() then
 					Control.CastSpell(HK_Q, minion.pos)
@@ -156,21 +159,23 @@ function ClassicAhri:Clear()
 				end
 			end
 		end
-		if Menu.Clear.W:Value() > 0 and IsReady(_W) and lastW + 250 < GetTickCount() and GetMinionCount(700, myHero.pos) >= Menu.Clear.W:Value() then
+		if laneW and GetMinionCount(700, myHero.pos) >= Menu.Clear.W:Value() then
 			Control.CastSpell(HK_W)
 			V2:AfterCast(HK_W, function() lastW = GetTickCount() end)
 			return
 		end
 	end
+	local jungleQ, jungleW = Menu.Clear.JungleQ:Value() and qReady, Menu.Clear.JungleW:Value() and wReady
+	if not jungleQ and not jungleW then return end
 	local monsters = _G.SDK.ObjectManager:GetMonsters(self.QSpell.Range)
 	table.sort(monsters, function(a, b) return a.maxHealth > b.maxHealth end)
 	local target = monsters[1]
 	if not IsValid(target) or not target.pos2D.onScreen then return end
-	if Menu.Clear.JungleQ:Value() and IsReady(_Q) then
+	if jungleQ then
 		Control.CastSpell(HK_Q, target.pos)
 		return
 	end
-	if Menu.Clear.JungleW:Value() and IsReady(_W) and lastW + 250 < GetTickCount() and target.distance <= 700 then
+	if jungleW and target.distance <= 700 then
 		Control.CastSpell(HK_W)
 		V2:AfterCast(HK_W, function() lastW = GetTickCount() end)
 	end
@@ -178,13 +183,13 @@ end
 
 function ClassicAhri:CastGGPred(spell, target)
 	if spell == HK_Q then
-		local QPrediction = GGPrediction:SpellPrediction(self.QSpell)
+		local QPrediction = V2:Prediction(self.QSpell)
 		QPrediction:GetPrediction(target, myHero)
 		if QPrediction:CanHit(3) then
 			Control.CastSpell(HK_Q, QPrediction.CastPosition)
 		end
 	elseif spell == HK_E then
-		local EPrediction = GGPrediction:SpellPrediction(self.ESpell)
+		local EPrediction = V2:Prediction(self.ESpell)
 		EPrediction:GetPrediction(target, myHero)
 		if EPrediction:CanHit(3) then
 			Control.CastSpell(HK_E, EPrediction.CastPosition)

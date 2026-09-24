@@ -123,7 +123,7 @@ function ClassicCorki:AutoQ()
 end
 
 function ClassicCorki:CastQ(target)
-	local QPrediction = GGPrediction:SpellPrediction(self.QSpell)
+	local QPrediction = V2:Prediction(self.QSpell)
 	QPrediction:GetPrediction(target, myHero)
 	if QPrediction:CanHit(3) then
 		Control.CastSpell(HK_Q, QPrediction.CastPosition)
@@ -132,7 +132,7 @@ end
 
 function ClassicCorki:CastR(target)
 	if HaveBuff(myHero, "Jade_CorkiR_Check") then
-		local R2Prediction = GGPrediction:SpellPrediction(self.R2Spell)
+		local R2Prediction = V2:Prediction(self.R2Spell)
 		R2Prediction:GetPrediction(target, myHero)
 		if R2Prediction:CanHit(3) then
 			local _, collisionObjects, collisionCount = GGPrediction:GetCollision(myHero.pos, R2Prediction.CastPosition, self.R2Spell.Speed, self.R2Spell.Delay, self.R2Spell.Radius, {GGPrediction.COLLISION_MINION}, target.networkID)
@@ -146,7 +146,7 @@ function ClassicCorki:CastR(target)
 			end
 		end
 	else
-		local R1Prediction = GGPrediction:SpellPrediction(self.R1Spell)
+		local R1Prediction = V2:Prediction(self.R1Spell)
 		R1Prediction:GetPrediction(target, myHero)
 		if R1Prediction:CanHit(3) then
 			local _, collisionObjects, collisionCount = GGPrediction:GetCollision(myHero.pos, R1Prediction.CastPosition, self.R1Spell.Speed, self.R1Spell.Delay, self.R1Spell.Radius, {GGPrediction.COLLISION_MINION}, target.networkID)

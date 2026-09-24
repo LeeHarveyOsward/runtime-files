@@ -1,4 +1,4 @@
--- Release 5
+-- Release 6
 local client=_G.OrbamaReleaseClient
 if not client then
 local hash=(function()
@@ -225,7 +225,7 @@ return function(env,hash,builtin,origin,package)
 end
 
 end)()
-client=create(_G,hash,5,"https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files")
+client=create(_G,hash,6,"https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files")
 _G.OrbamaReleaseClient=client
 end
 return client:Boot("LeeHarveyOsward",function()
@@ -1558,7 +1558,7 @@ if not _G.SDK and not _G.GGUpdate then
  end)
  if not ok or not (_G.SDK and _G.SDK.OrbamaVersion) then print("[LHO] Orbama load failed: " .. tostring(err or "SDK unavailable")); return end
 end
-local incomingBuild = "2026-09-23-r82"
+local incomingBuild = "2026-09-24-r84"
 local previous = _G.LeeHarveyOsward
 if previous then
  if previous.build == incomingBuild and previous.active then return previous end
@@ -2781,16 +2781,20 @@ function I:needsShield(range)
     return false
 end
 function I:defenseAllowed(slot)
-    local c=self.ctx;local item=myHero:GetItemData(slot);local rule=item and self:rule(item.itemID)
-    if not c.config:get('items') or not c.config:get('idleDefense') or not rule or not c.config:get(rule.group) then return false end
+    local c=self.ctx
+    if not c.config:get('items') or not c.config:get('idleDefense') then return false end
+    local item=myHero:GetItemData(slot);local rule=item and self:rule(item.itemID)
+    if not rule or not c.config:get(rule.group) then return false end
     if rule.cleanse and self.actions.capabilities and self.actions.capabilities.automationClaims then
         self.actions:syncAutomation()
         if not self.actions.qssClaim then return false end
     end
+    if not c:ready(slot) then return false end
     return rule.cleanse and self:needsCleanse() or rule.shield and self:needsShield(rule.range)
         or rule.group=='itemSlow' and U.hp(myHero)<=c.config:get('shieldHP') and c:threats(myHero.pos,rule.range)>0
 end
 function I:defense(owner)
+    if not self.ctx.config:get('items') or not self.ctx.config:get('idleDefense') then return false end
     for slot=6,11 do
         if self:defenseAllowed(slot) and self.actions:cast(slot,nil,owner or 'defense',{interrupt=true,
             validate=function()return self:defenseAllowed(slot),'defense_no_longer_needed' end}) then return true end
@@ -2802,7 +2806,7 @@ function I:itemAllowed(slot,target)
     if not c.config:get('items') or not U.valid(target) or c:dash() or c.sdk.Orbwalker:IsAutoAttacking() then return false end
     local champion=target.team~=300 and target.team~=myHero.team and target.type==myHero.type
     local item=myHero:GetItemData(slot);local rule=item and self:rule(item.itemID)
-    if not rule or not c.config:get(rule.group) or rule.cleanse or rule.shield or rule.champion and not champion
+    if not rule or not c.config:get(rule.group) or rule.cleanse or rule.shield or rule.champion and not champion or not c:ready(slot)
         or U.dist(myHero.pos,target.pos)>rule.range then return false end
     local useful=true
     if rule.reset then useful=c.lastAttackFinished and c:now()-c.lastAttackFinished<.3 and U.dist(myHero.pos,target.pos)<=c:attackRange(target) end
@@ -2811,6 +2815,7 @@ function I:itemAllowed(slot,target)
     return useful,rule
 end
 function I:tick(target,owner)
+    if not self.ctx.config:get('items') then return false end
     for slot=6,11 do
         local useful,rule=self:itemAllowed(slot,target)
         if useful and self.actions:cast(slot,rule.targeted and target or nil,owner,{intendedTarget=target,
@@ -3021,6 +3026,13 @@ function App:preMove(args)
     -- jungle and lane clear share a key. Routing/kiting ownership belongs to J.
     if mode=='fight' or mode=='clear' or mode=='gg_last' or mode=='harass' or mode=='gg' then
         if not c.sdk.Orbwalker.ForceMovement then
+            -- Preserve Orbama's physical-pointer click path. It owns the final
+            -- focus/hover/ownership validation and never needs a world warp.
+            -- Hovered units still use the bounded safe-ground alternative.
+            if args.Target==nil and c.sdk.Cursor.MoveAtCursor and Game.GetUnderMouseObject then
+                local ok,hover=pcall(Game.GetUnderMouseObject)
+                if ok and not hover then return end
+            end
             local destination=args.Target or (c.sdk.Cursor.GetPlayerPosition and c.sdk.Cursor:GetPlayerPosition()) or c.aim or mousePos
             if destination then
                 local point=require('lho.ground').select(c,destination.pos or destination)
@@ -3097,6 +3109,18 @@ function App:tick()
     -- auto-leveling or ordinary combat can consume this tick's dispatcher.
     local previewInput=c.input:previewHeld() and (c.input:held('cursorKey') or c.input:held('allyKey'))
     if not c:blocked() then c.smite:auto() end
+    local evade=c.sdk.Evade
+    if evade and evade.RegisterController and self.evadeProvider~=evade then
+        local registered=evade:RegisterController('LHO',{active=function()return self.active end,committed=function()
+            return self.active and (c.combat.insec~=nil or c.wards.pending~=nil)
+        end,yield=function(evidence)
+            if not evidence.likelyDeath then return false end
+            self:cancel('evade_emergency',false)
+            return true
+        end})
+        if registered then self.evadeProvider=evade end
+    end
+    if evade and type(evade.Evading)=='function'and evade:Evading()then c.attackTarget=nil;c.moveTarget=nil;c.status='Evading';return end
     c.wards:fastTick(true)
     c.combat:fastKick()
     -- Release a prepared post-attack move before diagnostic snapshots and
@@ -4374,14 +4398,15 @@ function B:defense()
     local c=self.ctx
     if not c.config:get('idleDefense') or self.wards.pending or self.insec or c:combatTransit() then return false end
     if c.config:get('reserveW') then return c.emergencyShield:tick() end
-    local threatened=c:threats(myHero.pos,850)>0
-    if c:stage(1)==1 and threatened and U.hp(myHero)<=c.config:get('shieldHP') then
+    if c:stage(1)~=1 or not c:ready(1) then return false end
+    if U.hp(myHero)<=c.config:get('shieldHP') and c:threats(myHero.pos,850)>0 then
         return self.spells:w(myHero,'defense',true)
     end
     if c:stage(1)==1 then
         for _,a in ipairs(c.allies or {}) do
-            if U.hp(a)<=c.config:get('allyShieldHP') and c:threats(a.pos,700)>0 and not c:underTurret(a.pos)
-                and U.dist(myHero.pos,a.pos)<=c.profile.wRange then return self.spells:w(a,'defense',true) end
+            if U.valid(a) and U.dist(myHero.pos,a.pos)<=c.profile.wRange
+                and U.hp(a)<=c.config:get('allyShieldHP') and c:threats(a.pos,700)>0 and not c:underTurret(a.pos)
+                then return self.spells:w(a,'defense',true) end
         end
     end
     return false
@@ -4799,6 +4824,17 @@ return function(a)
     end
     function a:hasCursorQueue() return true end
     function a:request(q)
+        if q.owner~='autosmite' then
+            local validate=q.validate;local guard=q.commitGuard
+            q.validate=function(...)
+                if c.sdk.Evade and type(c.sdk.Evade.Evading)=='function' and c.sdk.Evade:Evading()then return false,'evade_intervention'end
+                return validate(...)
+            end
+            if guard then q.commitGuard=function(...)
+                if c.sdk.Evade and type(c.sdk.Evade.Evading)=='function' and c.sdk.Evade:Evading()then return false,'evade_intervention'end
+                return guard(...)
+            end end
+        end
         local id,why=self.scope:Request(q)
         if not id then return false,why end
         self.lastCursorAction=id;self.owners[q.owner]=id
@@ -5784,10 +5820,10 @@ function E:packet(missile,lead)
         or not U.position(missile.pos) or not U.finite(d.speed) or d.speed<=0 then return end
     local name=U.name(d.name)
     if not name:find('basicattack',1,true) and not name:find('critattack',1,true) then return end
-    local source=self:source(d.owner)
-    if not source or not c.sdk.Damage or not c.sdk.Damage.GetAutoAttackDamage then return end
     local remaining=math.max(0,U.dist(missile.pos,myHero.pos)-(myHero.boundingRadius or 0))/d.speed
     if remaining<=0 or remaining>lead then return end
+    local source=self:source(d.owner)
+    if not source or not c.sdk.Damage or not c.sdk.Damage.GetAutoAttackDamage then return end
     local ok,damage=pcall(c.sdk.Damage.GetAutoAttackDamage,c.sdk.Damage,source,myHero)
     if not ok or not U.finite(damage) or damage<=0 then return end
     return {id=U.id(missile),source=U.id(source),damage=damage,remaining=remaining}
@@ -9334,7 +9370,7 @@ end
 modules["lho.profiles"] = function(require)
 -- Runtime identifiers: repository ClassicAIO + Riot Data Dragon 16.17.1.
 -- Classic combat coefficients are candidates, deliberately gated until measured.
-local P={version='16.17.1',build='2026-09-23-r82',neutralTeam=300}
+local P={version='16.17.1',build='2026-09-24-r84',neutralTeam=300}
 P.classicSmiteTargets={s3lizardelder=true,s3ancientgolem=true,lizardelder=true,ancientgolem=true,
     giantwolf=true,wraith=true,greatwraith=true,golem=true,wight=true,red=true,blue=true}
 P.normalSmiteTargets={srured=true,srublue=true,srumurkwolf=true,srurazorbeak=true,
@@ -10097,8 +10133,29 @@ function S:cast(target,owner,requireLethal)
     if not self:campTarget(target) then return false end
     local margin=self:margin(target)
     if requireLethal and (target.health or 0)+(target.allShield or 0)>self:damage()-margin then return false end
+    local identity=U.id(target)
+    local lookup=self.objectiveLookups and self.objectiveLookups[identity]
+    local function matches(m)
+        return (type(m)=='table' or type(m)=='userdata') and U.id(m)==identity
+    end
+    local function currentTarget()
+        if not lookup then return target end
+        if Game.GetObjectByNetID then
+            local ok,m=pcall(Game.GetObjectByNetID,identity)
+            if ok and matches(m) then return m end
+        end
+        if lookup.index and Game.Object then
+            local m=Game.Object(lookup.index)
+            if matches(m) then return m end
+        end
+        if Game.GetUnderMouseObject then
+            local ok,m=pcall(Game.GetUnderMouseObject)
+            if ok and matches(m) then return m end
+        end
+    end
     local function validAtKeypress()
         if not self:ready(true) or self:resolve()~=slot then return false,'smite_slot_or_readiness_changed' end
+        local target=currentTarget()
         if not U.valid(target) or not self:campTarget(target) or target.isImmortal then return false,'smite_target_unavailable' end
         if not self:inRange(target) then return false,'smite_out_of_range' end
         if requireLethal and target.health+(target.allShield or 0)>self:damage()-self:margin(target) then return false,'smite_not_lethal' end
@@ -10128,6 +10185,68 @@ function S:campTarget(target)
     -- become the main monster when the large monster dies or leaves vision.
     local names=self.ctx.profile.id=='classic' and P.classicSmiteTargets or P.normalSmiteTargets
     return names[name]==true
+end
+function S:objectiveTargets(targets,nearObjective)
+    local c=self.ctx;local now=c:now();local extra={};local seen={};local lookups={};local listed=false
+    self.objectiveLookups=lookups
+    for _,m in ipairs(targets) do
+        local id=U.id(m);if id then seen[id]=true end
+        if U.valid(m) and m.team==300 and P.epics[P.category(m.charName)]
+            and P.jungleEntity(m) and U.dist(myHero.pos,m.pos)<1600 then listed=true end
+    end
+    local function accept(m,source,index)
+        local kind=type(m)
+        if kind~='table' and kind~='userdata' then return false end
+        if not U.valid(m) or not Obj_AI_Minion or m.type~=Obj_AI_Minion or m.team~=300
+            or not P.epics[P.category(m.charName)] or not P.jungleEntity(m)
+            or U.dist(myHero.pos,m.pos)>=1600 then return false end
+        local id=U.id(m);if not id then return false end
+        if lookups[id] and index then lookups[id].index=index end
+        if not seen[id] then
+            seen[id]=true;extra[#extra+1]=m;lookups[id]={index=index}
+            if c.config.capture then c:trace('smite_object_discovered',
+                {target=id,name=m.charName,source=source,health=m.health,pos=U.copy(m.pos)},id,1) end
+        end
+        return true
+    end
+    if Game.GetUnderMouseObject then
+        local ok,m=pcall(Game.GetUnderMouseObject)
+        if ok and accept(m,'native_hover') then self.objectiveID=U.id(m) end
+    end
+    if self.objectiveID and Game.GetObjectByNetID then
+        local ok,m=pcall(Game.GetObjectByNetID,self.objectiveID)
+        if not ok or not m or U.id(m)~=self.objectiveID or not accept(m,'native_identity') then
+            self.objectiveID=nil
+        end
+    end
+    if nearObjective and not listed and Game.ObjectCount and Game.Object then
+        local indices=self.objectiveIndices or {};local retained={}
+        for _,index in ipairs(indices) do
+            local m=Game.Object(index)
+            if accept(m,'native_object_index',index) then retained[#retained+1]=index end
+        end
+        self.objectiveIndices=retained
+        if now>=(self.objectiveScanAt or 0) then
+            local count=U.count(Game.ObjectCount(),65536)
+            local index=self.objectiveScanIndex or 1
+            if index>count then index=1 end
+            local stop=math.min(count,index+511)
+            local indexed={};for _,i in ipairs(retained) do indexed[i]=true end
+            for i=index,stop do
+                if not indexed[i] and accept(Game.Object(i),'native_object_scan',i) and #retained<8 then
+                    retained[#retained+1]=i
+                end
+            end
+            self.objectiveScanIndex=stop>=count and 1 or stop+1
+            self.objectiveScanAt=now+(#retained>0 and .1 or .02)
+        end
+    elseif not nearObjective then
+        self.objectiveIndices=nil;self.objectiveScanIndex=nil;self.objectiveScanAt=nil
+    end
+    if #extra==0 then return targets end
+    local result={};for _,m in ipairs(targets) do result[#result+1]=m end
+    for _,m in ipairs(extra) do result[#result+1]=m end
+    return result
 end
 function S:auto(epicsOnly)
     local c=self.ctx
@@ -10171,8 +10290,10 @@ function S:auto(epicsOnly)
         targets={}
         for i=1,U.count(Game.MinionCount(),4096) do local fresh=Game.Minion(i);if fresh then targets[#targets+1]=fresh end end
     end
+    if enabled then targets=self:objectiveTargets(targets,freshScan) end
     if #targets==0 and not self.contest then
-        self.decision=enabled and 'No eligible monster in range' or 'Toggle OFF';return false
+        self.decision=enabled and 'No eligible monster in range' or 'Toggle OFF'
+        if not freshScan then return false end
     end
     local ready=self:ready();local damage=self:damage()
     local reserve=not epicsOnly and c.farm and c.farm:epicSoon()
@@ -10219,21 +10340,22 @@ function S:auto(epicsOnly)
     end
     -- Persistent, bounded objective evidence survives the 20-minute playtest
     -- window. Dispatch takes priority over serialization and disk I/O.
-    if rows and (#rows>0 or self.contest) then
+    if rows and (#rows>0 or self.contest or freshScan) then
         local slot,classic,spell=self:resolve();local block=c.actions.lastBlock
         local state=tostring(enabled)..':'..tostring(ready)..':'..tostring(self.decision)
         local edge=false;for _,row in ipairs(rows) do if row.lethal then edge=true end end
         if ok or edge~=self.lethalEdge or now>=(self.contestAt or 0)
-            or state~=self.contestState and now-(self.lastSampleAt or -1)>=.05 or #rows==0 then
+                or state~=self.contestState and now-(self.lastSampleAt or -1)>=.05 then
             if c.config.capture then c:log('objective_sample',{objectives=rows,enabled=enabled,ready=ready,slot=slot,classic=classic,
                 cooldown=spell and spell.currentCd,ammo=spell and spell.ammo,damage=damage,mode=c.mode,
                 decision=self.decision,attempted=ok,origin=U.copy(myHero.pos),cursorStep=c.sdk.Cursor.Step,
                 block=block and now-block.at<.2 and block or nil,chat=Game.IsChatOpen and Game.IsChatOpen(),
-                focused=Game.IsOnTop and Game.IsOnTop(),leeDead=myHero.dead}) end
+                focused=Game.IsOnTop and Game.IsOnTop(),leeDead=myHero.dead,
+                nearObjective=freshScan,discovered=objectiveCount}) end
             self.contestAt=now+(edge and .05 or .1);self.contestState=state;self.lethalEdge=edge;self.lastSampleAt=now
         end
     end
-    self.contest=objectiveCount>0
+    self.contest=objectiveCount>0 or freshScan
     return ok
 end
 function S:clear(target,owner)
@@ -11713,15 +11835,29 @@ function Wave:attackWait()
     if a.ServerStart then return math.max(0,a.ServerStart+self:cycle()-c:now()) end
     return self:cycle()
 end
-function Wave:damage(slot,m)
+function Wave:aaDamage(m,evaluation)
+    if not evaluation then return self.ctx:aaDamage(m) end
+    if evaluation.aa[m]==nil then evaluation.aa[m]=self.ctx:aaDamage(m) end
+    return evaluation.aa[m]
+end
+function Wave:spellDamage(slot,m,evaluation)
+    if not evaluation then return self.ctx:spellDamageEstimate(slot,m,1) end
+    local rows=evaluation.spells[slot]
+    if not rows then rows={};evaluation.spells[slot]=rows end
+    if rows[m]==nil then rows[m]=self.ctx:spellDamageEstimate(slot,m,1) end
+    return rows[m]
+end
+function Wave:damage(slot,m,evaluation)
     local c=self.ctx
     if not U.valid(m) or m.team==myHero.team or m.team==300 then return 0 end
-    local lane=false
-    for _,unit in ipairs(c.minions or {}) do if U.same(m,unit) then lane=true;break end end
+    local lane=evaluation and evaluation.units[m] or false
+    if not lane then
+        for _,unit in ipairs(c.minions or {}) do if U.same(m,unit) then lane=true;break end end
+    end
     if not lane then return 0 end
     local verified=c.config:get('mechanicsVerified') or c.profile.damageVerified
     if not verified and not c.config:get('laneEstimates') then return 0 end
-    return c:spellDamageEstimate(slot,m,1)*(1-c.config:get('laneDamageMargin')/100)
+    return self:spellDamage(slot,m,evaluation)*(1-c.config:get('laneDamageMargin')/100)
 end
 function Wave:reservedTarget(m)
     local r=self.reserved[U.id(m)]
@@ -11733,13 +11869,14 @@ end
 function Wave:reserve(units,event,delay)
     for _,m in ipairs(units) do self.reserved[U.id(m)]={event=event,untilTime=self.ctx:now()+delay+.2} end
 end
-function Wave:attackTarget(anchor)
+function Wave:attackTarget(anchor,units,evaluation)
     local c=self.ctx;local last,lastHP,lastDeadline=nil,math.huge,math.huge;local push,pushHP=nil,-1;local incoming=false
     local cycle=self:cycle();local wait=self:attackWait()
-    for _,m in ipairs(self:units(anchor)) do
+    for _,m in ipairs(units or self:units(anchor)) do
         if not self:reservedTarget(m) and U.dist(myHero.pos,m.pos)<=c:attackRange(m) then
             local hp=self:healthAt(m,wait+self:impact(m));local nextHP=self:healthAt(m,wait+self:impact(m)+cycle)
-            if hp>0 and hp<=c:aaDamage(m) then
+            local damage=self:aaDamage(m,evaluation)
+            if hp>0 and hp<=damage then
                 local deadline=math.huge
                 if nextHP<=0 then
                     for step=1,4 do
@@ -11751,22 +11888,22 @@ function Wave:attackTarget(anchor)
                     last,lastHP,lastDeadline=m,hp,deadline
                 end
             end
-            if hp>c:aaDamage(m) and nextHP<=c:aaDamage(m) then incoming=true end
-            if hp>c:aaDamage(m) and hp>pushHP then push,pushHP=m,hp end
+            if hp>damage and nextHP<=damage then incoming=true end
+            if hp>damage and hp>pushHP then push,pushHP=m,hp end
         end
     end
     return last or (not incoming and push or nil),last~=nil,incoming
 end
 -- Bounded earliest-deadline AA simulation. Forecasts are estimates: reject
 -- wave softening if any newly endangered minion lacks an AA/Q rescue slot.
-function Wave:schedule(units,damage,castDelay,boost,effectAt)
+function Wave:schedule(units,damage,castDelay,boost,effectAt,evaluation)
     local c=self.ctx;local horizon=c.config:get('waveHorizon');local step=.1
     local saved,deadlines={},{};local at=self:attackWait()+c:windup()+c.latency*.5+(castDelay or 0)
     local attackable,attackDamage={},{};local cycle=self:cycle()
     local function hp(m,t)return self:healthAt(m,t)-(t>=(effectAt or 0) and damage and damage[U.id(m)] or 0)end
     for _,m in ipairs(units) do
         attackable[m]=U.dist(myHero.pos,m.pos)<=c:attackRange(m)
-        if attackable[m] then attackDamage[m]=c:aaDamage(m) end
+        if attackable[m] then attackDamage[m]=self:aaDamage(m,evaluation) end
         if not self:reservedTarget(m) then
             if hp(m,0)<=0 then deadlines[U.id(m)]=0
             elseif hp(m,horizon)<=0 then
@@ -11796,7 +11933,7 @@ function Wave:schedule(units,damage,castDelay,boost,effectAt)
     end
     return saved,deadlines
 end
-function Wave:canSoften(units,slot,primary,rescue,lastOnly)
+function Wave:canSoften(units,slot,primary,rescue,lastOnly,evaluation)
     local c=self.ctx;local damage={};local affected=0;local delay=.25+c.latency*.5
     if slot==0 then delay=delay+U.dist(myHero.pos,primary.pos)/c.profile.qSpeed
         if self:healthAt(primary,delay)<=0 then return false end
@@ -11805,32 +11942,32 @@ function Wave:canSoften(units,slot,primary,rescue,lastOnly)
         if slot==2 and U.dist(myHero.pos,m.pos)<=c.profile.eRange or slot==0 and U.same(m,primary) then
             -- Use the full estimate for future HP depletion, the lower estimate
             -- for claiming kills. The uncertainty band never certifies a kill.
-            damage[U.id(m)]=c:spellDamageEstimate(slot,m,1);affected=affected+1
+            damage[U.id(m)]=self:spellDamage(slot,m,evaluation);affected=affected+1
         end
     end
     if affected==0 or slot==2 and affected<2 and not rescue then return false end
-    local saved,deadlines=self:schedule(units,damage,.25,false,delay)
-    local baseline=rescue and self:schedule(units) or nil
+    local saved,deadlines=self:schedule(units,damage,.25,false,delay,evaluation)
+    local baseline=rescue and self:schedule(units,nil,nil,nil,nil,evaluation) or nil
     local qAvailable=slot~=0 and c.config:get(lastOnly and 'lastQ' or 'waveQ') and c:stage(0)==1 and c:ready(0)
         and (myHero.mana or 0)>=(c:spell(slot).mana or 0)+(c:spell(0).mana or 0)
     local qRescue,required=nil,{}
     for _,m in ipairs(units) do
         local id=U.id(m);local hit=damage[id] or 0;local hp=self:healthAt(m,delay)
-        local killed=hit>0 and hp>0 and hp<=self:damage(slot,m)
+        local killed=hit>0 and hp>0 and hp<=self:damage(slot,m,evaluation)
         local protect=not rescue or baseline[id] or hit>0 and self:healthAt(m,c.config:get('waveHorizon'))>0
         if not killed and not self:reservedTarget(m) and deadlines[id] and protect then required[id]=m end
         if required[id] and not saved[id] then
             local qDelay=.25+.25+U.dist(myHero.pos,m.pos)/c.profile.qSpeed+c.latency*.5
             local after=self:healthAt(m,qDelay)-hit
             local point=qAvailable and c.spells:predict(m)
-            if qAvailable and point and after>0 and after<=self:damage(0,m) and #c.spells:blockers(m,point)==0 then
+            if qAvailable and point and after>0 and after<=self:damage(0,m,evaluation) and #c.spells:blockers(m,point)==0 then
                 qAvailable=false;qRescue=id
             else return false end
         end
     end
     if qRescue then
         local remaining={};for _,m in ipairs(units) do if U.id(m)~=qRescue then remaining[#remaining+1]=m end end
-        local later=self:schedule(remaining,damage,.5,false,delay)
+        local later=self:schedule(remaining,damage,.5,false,delay,evaluation)
         for id in pairs(required) do if id~=qRescue and not later[id] then return false end end
     end
     return true
@@ -11865,30 +12002,39 @@ function Wave:attackLocked()
 end
 function Wave:tick(anchor,beforeAttack,lastOnly)
     self.forecastAt=nil
-    local c=self.ctx;local units=self:units(anchor);local aa,hasLastHit,incoming=self:attackTarget(anchor)
+    local c=self.ctx
     if not c.config:get(lastOnly and 'lastAbilities' or 'waveAbilities') then return false end
     if not c.config:get('mechanicsVerified') and not c.profile.damageVerified then
         c.status=c.config:get('laneEstimates') and 'Lane Q/E: profile estimates (margin applied)' or 'Lane Q/E paused: damage estimates disabled'
     end
     if c.sdk.Orbwalker:IsAutoAttacking() or self:attackLocked() then return false end
-    local useQ=c.config:get(lastOnly and 'lastQ' or 'waveQ');local useE=c.config:get(lastOnly and 'lastE' or 'waveE')
+    local useQ=c.config:get(lastOnly and 'lastQ' or 'waveQ') and c:stage(0)==1 and c:ready(0)
+    local useE=c.config:get(lastOnly and 'lastE' or 'waveE') and c:stage(2)==1 and c:ready(2)
+    local useW=c.config:get(lastOnly and 'lastW' or 'waveW') and c:ready(1)
+    if not useQ and not useE and not useW then return false end
+    local units=self:units(anchor)
+    -- Reuse damage only inside this synchronous decision. No pending action or
+    -- later callback receives this table; cast validation remains fresh.
+    local evaluation={aa={},spells={},units={}}
+    for _,m in ipairs(units) do evaluation.units[m]=true end
+    local aa,hasLastHit,incoming=self:attackTarget(anchor,units,evaluation)
     local eKills,qSaves={},{}
     local eDelay=.25+c.latency*.5
     local cycle=self:cycle();local wait=self:attackWait()
-    local aaSaved=self:schedule(units)
+    local aaSaved=(useQ or useE or lastOnly and useW) and self:schedule(units,nil,nil,nil,nil,evaluation) or {}
     for _,m in ipairs(units) do
         if not self:reservedTarget(m) then
-            local ehp=self:healthAt(m,eDelay)
-            if useE and c:stage(2)==1 and c:ready(2) and U.dist(myHero.pos,m.pos)<=c.profile.eRange and ehp>0 and ehp<=self:damage(2,m) then
-                eKills[#eKills+1]=m
+            if useE and U.dist(myHero.pos,m.pos)<=c.profile.eRange then
+                local ehp=self:healthAt(m,eDelay)
+                if ehp>0 and ehp<=self:damage(2,m,evaluation) then eKills[#eKills+1]=m end
             end
-            if useQ and not aaSaved[U.id(m)] and c:stage(0)==1 and c:ready(0) then
+            if useQ and not aaSaved[U.id(m)] then
                 local point=c.spells:predict(m)
                 if point then
                     local qDelay=.25+U.dist(myHero.pos,point)/c.profile.qSpeed+c.latency*.5
                     local qhp=self:healthAt(m,qDelay)
                     local aaLater=self:healthAt(m,wait+self:impact(m)+(U.same(m,aa) and 0 or cycle))
-                    if qhp>0 and qhp<=self:damage(0,m)
+                    if qhp>0 and qhp<=self:damage(0,m,evaluation)
                         and (aaLater<=0 or U.dist(myHero.pos,m.pos)>c:attackRange(m)) then
                         qSaves[#qSaves+1]={unit=m,delay=qDelay,hp=qhp}
                     end
@@ -11915,7 +12061,7 @@ function Wave:tick(anchor,beforeAttack,lastOnly)
     end
     local eNeeded=not lastOnly
     for _,m in ipairs(eKills) do if not aaSaved[U.id(m)] then eNeeded=true end end
-    if (#eKills>=2 or eRescue) and not waitForAA and eNeeded and self:canSoften(units,2,nil,true,lastOnly) then
+    if (#eKills>=2 or eRescue) and not waitForAA and eNeeded and self:canSoften(units,2,nil,true,lastOnly,evaluation) then
         if self:cast(2,eKills[1],eKills,eDelay) then return true end
     end
     -- Let GG issue an imminent last hit first; save a different minion after
@@ -11934,16 +12080,16 @@ function Wave:tick(anchor,beforeAttack,lastOnly)
     end
     if not beforeAttack and not hasLastHit and not incoming then
         if not lastOnly and c.config:get('waveSoften') then
-            if useE and c:stage(2)==1 and c:ready(2) and self:canSoften(units,2) then
-                for _,m in ipairs(units) do if U.dist(myHero.pos,m.pos)<=c.profile.eRange and self:damage(2,m)>0 then
+            if useE and self:canSoften(units,2,nil,nil,nil,evaluation) then
+                for _,m in ipairs(units) do if U.dist(myHero.pos,m.pos)<=c.profile.eRange and self:damage(2,m,evaluation)>0 then
                     if self:cast(2,m,eKills,eDelay) then return true end;break
                 end end
             end
         end
-        if c.config:get(lastOnly and 'lastW' or 'waveW') and not c.clear:weaving() then
+        if useW and not c.clear:weaving() then
             local useful=not lastOnly and U.hp(myHero)<90 and #units>=2
             if lastOnly then
-                local faster,deadlines=self:schedule(units,nil,0,true)
+                local faster,deadlines=self:schedule(units,nil,0,true,nil,evaluation)
                 for id in pairs(deadlines) do if not aaSaved[id] and faster[id] then useful=true end end
             end
             if useful then return self:cast(1,myHero) end
@@ -12164,7 +12310,7 @@ transports["gg"]=(function()
 return function(g,sdk,active,options)
     assert(not sdk.OrbamaVersion,'Original GG required')
     local A={falseIsRejection=options.ggFalseIsRejection~=false,name='OriginalGG',queue={},records={},serial=0,history={},caps={
-        surviveMovementCommands=false,resolveWorldTarget=false,automationClaims=false,
+        surviveMovementCommands=false,resolveWorldTarget=false,automationClaims=false,prevalidateWorldCast=false,prevalidateWorldMove=false,
         cancelSubmitted=false,observedExecution=false,privateQueue=true,updatePriority=true}}
     sdk.ActionClientGG=sdk.ActionClientGG or {};local providers=sdk.ActionClientGG;providers[#providers+1]=A
     local rank={critical=4,interactive=3,normal=2,background=1}
@@ -12177,7 +12323,7 @@ return function(g,sdk,active,options)
     function A:Capabilities() return self.caps end
     function A:Available() return not sdk.Cursor or sdk.Cursor.Step==0 end
     function A:Submit(q)
-        for _,name in ipairs({'verifyTarget','aimCandidates','aimFallback','retryKey','world','count','approach','handoff','survivePointerMotion'})do
+        for _,name in ipairs({'verifyTarget','aimCandidates','aimFallback','retryKey','world','count','approach','handoff','survivePointerMotion','prevalidateWorldCast','prevalidateWorldMove','commitGuard'})do
             if q[name]~=nil and q[name]~=false then return nil,'GG_unsupported_option:'..name end
         end
         if q.type~='cast' and q.type~='attack' and q.type~='move' then return nil,'GG_unsupported_type' end
@@ -12302,7 +12448,8 @@ return function(g, sdk, active, options)
     local capabilities=api:GetCapabilities()
     local scope=assert(api:RegisterScope(options.name,{priorities={'critical','interactive','normal','background'}}))
     -- Only capabilities exposed by this facade, not unrelated raw-scope methods.
-    local clientCaps={surviveMovementCommands=capabilities.surviveMovementCommands,
+    local clientCaps={prevalidateWorldCast=capabilities.prevalidateWorldCast,prevalidateWorldMove=capabilities.prevalidateWorldMove,
+        worldCommitMaxMs=capabilities.worldCommitMaxMs,surviveMovementCommands=capabilities.surviveMovementCommands,
         survivePointerMotion=capabilities.survivePointerMotion,resolveWorldTarget=capabilities.resolveWorldTarget,
         automationClaims=capabilities.automationClaims,automationFunctions=capabilities.automationFunctions,
         actionCleanupState=capabilities.actionCleanupState,aimCandidates=capabilities.aimCandidates,
@@ -12319,7 +12466,8 @@ return function(g, sdk, active, options)
             dependency=intent.dependency,dependencyState=intent.dependencyState,ready=intent.ready,handoff=intent.handoff,
             verifyTarget=intent.verifyTarget,aimCandidates=intent.aimCandidates,aimFallback=intent.aimFallback,
             retryKey=intent.retryKey,world=intent.world,count=intent.count,approach=intent.approach,
-            survivePointerMotion=intent.survivePointerMotion,
+            survivePointerMotion=intent.survivePointerMotion,prevalidateWorldCast=intent.prevalidateWorldCast,
+            prevalidateWorldMove=intent.prevalidateWorldMove,commitGuard=intent.commitGuard,
             validate=function(_,resolved)if not active() then return false,'inactive_instance' end;return intent.mechanical(resolved) end}
         -- An independent resolved skillshot keeps its gameplay target while the
         -- player orbwalks. Opt into the provider's bounded correction centrally;
@@ -12419,10 +12567,44 @@ return function(g,transports,options)
     function C:Now()return transport:Now()end
     function C:Capabilities()
         local c=copy(transport:Capabilities());c.contexts=true;c.resources=true;c.replaceUnsent=true
-        c.observationTracking=true;c.boundedHistory=true;c.scopedConditions=true;c.sharedClientVersion=1
+        c.observationTracking=true;c.boundedHistory=true;c.scopedConditions=true;c.sharedClientVersion=1;c.emergencyResourceRelease=true
         return c
     end
     function C:Available()return transport:Available()end
+    function C:RegisterEmergencyYield(callback)
+        if self.closed or self.resolving or type(callback)~='function'then return false end
+        self.emergencyYield=callback;return true
+    end
+    function C:CooperateWithEvade(policy)
+        if self.closed or self.resolving or type(policy)~='table'or type(policy.committed)~='function'
+            or type(policy.yield)~='function'then return false end
+        self.evadePolicy=policy;return true
+    end
+    function C:YieldUnsent(resource)
+        if self.closed or self.resolving then return false end
+        for id,q in pairs(self.jobs)do if not resource or q.resource==resource then
+            local r=self:Poll(id)
+            if r and not r.sentAt then self:Cancel(id,'evade_emergency');self:Finish(id)end
+        end end
+        if resource then return hub.resources[resource]==nil end
+        return true
+    end
+    function C:RequestEmergencyRelease(resource,evidence)
+        if self.closed or self.resolving or type(evidence)~='table' or evidence.likelyDeath~=true
+            or type(evidence.expires)~='number' or evidence.expires<self:Now()
+            or evidence.expires>self:Now()+250 then return false,'emergency_evidence_required'end
+        local lease=hub.resources[resource]
+        if not lease then return true end
+        local owner=lease.client
+        if owner==self then return false,'already_owned'end
+        local record=owner:Poll(lease.id)
+        if not record or record.sentAt or record.cleanupPending then return false,'resource_in_flight'end
+        if not owner.emergencyYield then return false,'owner_declined'end
+        local ok,accepted=pcall(owner.emergencyYield,resource,copy(evidence),lease.id)
+        if not ok or accepted~=true then return false,'owner_declined'end
+        -- Only the owner can cancel and release. A callback's true is not release.
+        return hub.resources[resource]==nil,hub.resources[resource]and 'owner_release_pending' or nil
+    end
     function C:IsSending()return transport.sending==true end
     function C:Condition(owner,name,condition,exceptions)
         if self.resolving then return false,'resolver_side_effect'end
@@ -12435,6 +12617,7 @@ return function(g,transports,options)
 if self.gates[token]then self.gates[token]=nil;return true end;return false end
     function C:ContextValid(q,phase)
         if self.closed or not active() or g.myHero.dead or g.Game.IsChatOpen() or not g.Game.IsOnTop() then return false,'context_unavailable' end
+        if self.evadePolicy and sdk.Evade and type(sdk.Evade.Evading)=='function' and sdk.Evade:Evading()and not q.evadeCompatible then return false,'evade_intervention'end
         local c=q.context
         if c then
             if c.modes then local yes=false;for _,mode in ipairs(c.modes)do if sdk.Orbwalker.Modes[mode]then yes=true end end;if not yes then return false,'mode_ended' end end
@@ -13144,4 +13327,4 @@ if _G.SDK then boot() elseif Callback and Callback.Add then Callback.Add("Load",
 else print("[LHO] Game callback API unavailable; enable Orbama and reload.") end
 return _G.LeeHarveyOsward
 
-end,5)
+end,6)

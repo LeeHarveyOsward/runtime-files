@@ -40,8 +40,29 @@ function S:cast(target,owner,requireLethal)
     if not self:campTarget(target) then return false end
     local margin=self:margin(target)
     if requireLethal and (target.health or 0)+(target.allShield or 0)>self:damage()-margin then return false end
+    local identity=U.id(target)
+    local lookup=self.objectiveLookups and self.objectiveLookups[identity]
+    local function matches(m)
+        return (type(m)=='table' or type(m)=='userdata') and U.id(m)==identity
+    end
+    local function currentTarget()
+        if not lookup then return target end
+        if Game.GetObjectByNetID then
+            local ok,m=pcall(Game.GetObjectByNetID,identity)
+            if ok and matches(m) then return m end
+        end
+        if lookup.index and Game.Object then
+            local m=Game.Object(lookup.index)
+            if matches(m) then return m end
+        end
+        if Game.GetUnderMouseObject then
+            local ok,m=pcall(Game.GetUnderMouseObject)
+            if ok and matches(m) then return m end
+        end
+    end
     local function validAtKeypress()
         if not self:ready(true) or self:resolve()~=slot then return false,'smite_slot_or_readiness_changed' end
+        local target=currentTarget()
         if not U.valid(target) or not self:campTarget(target) or target.isImmortal then return false,'smite_target_unavailable' end
         if not self:inRange(target) then return false,'smite_out_of_range' end
         if requireLethal and target.health+(target.allShield or 0)>self:damage()-self:margin(target) then return false,'smite_not_lethal' end
@@ -71,6 +92,68 @@ function S:campTarget(target)
     -- become the main monster when the large monster dies or leaves vision.
     local names=self.ctx.profile.id=='classic' and P.classicSmiteTargets or P.normalSmiteTargets
     return names[name]==true
+end
+function S:objectiveTargets(targets,nearObjective)
+    local c=self.ctx;local now=c:now();local extra={};local seen={};local lookups={};local listed=false
+    self.objectiveLookups=lookups
+    for _,m in ipairs(targets) do
+        local id=U.id(m);if id then seen[id]=true end
+        if U.valid(m) and m.team==300 and P.epics[P.category(m.charName)]
+            and P.jungleEntity(m) and U.dist(myHero.pos,m.pos)<1600 then listed=true end
+    end
+    local function accept(m,source,index)
+        local kind=type(m)
+        if kind~='table' and kind~='userdata' then return false end
+        if not U.valid(m) or not Obj_AI_Minion or m.type~=Obj_AI_Minion or m.team~=300
+            or not P.epics[P.category(m.charName)] or not P.jungleEntity(m)
+            or U.dist(myHero.pos,m.pos)>=1600 then return false end
+        local id=U.id(m);if not id then return false end
+        if lookups[id] and index then lookups[id].index=index end
+        if not seen[id] then
+            seen[id]=true;extra[#extra+1]=m;lookups[id]={index=index}
+            if c.config.capture then c:trace('smite_object_discovered',
+                {target=id,name=m.charName,source=source,health=m.health,pos=U.copy(m.pos)},id,1) end
+        end
+        return true
+    end
+    if Game.GetUnderMouseObject then
+        local ok,m=pcall(Game.GetUnderMouseObject)
+        if ok and accept(m,'native_hover') then self.objectiveID=U.id(m) end
+    end
+    if self.objectiveID and Game.GetObjectByNetID then
+        local ok,m=pcall(Game.GetObjectByNetID,self.objectiveID)
+        if not ok or not m or U.id(m)~=self.objectiveID or not accept(m,'native_identity') then
+            self.objectiveID=nil
+        end
+    end
+    if nearObjective and not listed and Game.ObjectCount and Game.Object then
+        local indices=self.objectiveIndices or {};local retained={}
+        for _,index in ipairs(indices) do
+            local m=Game.Object(index)
+            if accept(m,'native_object_index',index) then retained[#retained+1]=index end
+        end
+        self.objectiveIndices=retained
+        if now>=(self.objectiveScanAt or 0) then
+            local count=U.count(Game.ObjectCount(),65536)
+            local index=self.objectiveScanIndex or 1
+            if index>count then index=1 end
+            local stop=math.min(count,index+511)
+            local indexed={};for _,i in ipairs(retained) do indexed[i]=true end
+            for i=index,stop do
+                if not indexed[i] and accept(Game.Object(i),'native_object_scan',i) and #retained<8 then
+                    retained[#retained+1]=i
+                end
+            end
+            self.objectiveScanIndex=stop>=count and 1 or stop+1
+            self.objectiveScanAt=now+(#retained>0 and .1 or .02)
+        end
+    elseif not nearObjective then
+        self.objectiveIndices=nil;self.objectiveScanIndex=nil;self.objectiveScanAt=nil
+    end
+    if #extra==0 then return targets end
+    local result={};for _,m in ipairs(targets) do result[#result+1]=m end
+    for _,m in ipairs(extra) do result[#result+1]=m end
+    return result
 end
 function S:auto(epicsOnly)
     local c=self.ctx
@@ -114,8 +197,10 @@ function S:auto(epicsOnly)
         targets={}
         for i=1,U.count(Game.MinionCount(),4096) do local fresh=Game.Minion(i);if fresh then targets[#targets+1]=fresh end end
     end
+    if enabled then targets=self:objectiveTargets(targets,freshScan) end
     if #targets==0 and not self.contest then
-        self.decision=enabled and 'No eligible monster in range' or 'Toggle OFF';return false
+        self.decision=enabled and 'No eligible monster in range' or 'Toggle OFF'
+        if not freshScan then return false end
     end
     local ready=self:ready();local damage=self:damage()
     local reserve=not epicsOnly and c.farm and c.farm:epicSoon()
@@ -162,21 +247,22 @@ function S:auto(epicsOnly)
     end
     -- Persistent, bounded objective evidence survives the 20-minute playtest
     -- window. Dispatch takes priority over serialization and disk I/O.
-    if rows and (#rows>0 or self.contest) then
+    if rows and (#rows>0 or self.contest or freshScan) then
         local slot,classic,spell=self:resolve();local block=c.actions.lastBlock
         local state=tostring(enabled)..':'..tostring(ready)..':'..tostring(self.decision)
         local edge=false;for _,row in ipairs(rows) do if row.lethal then edge=true end end
         if ok or edge~=self.lethalEdge or now>=(self.contestAt or 0)
-            or state~=self.contestState and now-(self.lastSampleAt or -1)>=.05 or #rows==0 then
+                or state~=self.contestState and now-(self.lastSampleAt or -1)>=.05 then
             if c.config.capture then c:log('objective_sample',{objectives=rows,enabled=enabled,ready=ready,slot=slot,classic=classic,
                 cooldown=spell and spell.currentCd,ammo=spell and spell.ammo,damage=damage,mode=c.mode,
                 decision=self.decision,attempted=ok,origin=U.copy(myHero.pos),cursorStep=c.sdk.Cursor.Step,
                 block=block and now-block.at<.2 and block or nil,chat=Game.IsChatOpen and Game.IsChatOpen(),
-                focused=Game.IsOnTop and Game.IsOnTop(),leeDead=myHero.dead}) end
+                focused=Game.IsOnTop and Game.IsOnTop(),leeDead=myHero.dead,
+                nearObjective=freshScan,discovered=objectiveCount}) end
             self.contestAt=now+(edge and .05 or .1);self.contestState=state;self.lethalEdge=edge;self.lastSampleAt=now
         end
     end
-    self.contest=objectiveCount>0
+    self.contest=objectiveCount>0 or freshScan
     return ok
 end
 function S:clear(target,owner)

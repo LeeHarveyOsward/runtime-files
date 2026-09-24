@@ -110,8 +110,13 @@ return function(input, clock)
     end
     function input:RefreshWorldPlacement(r)
         if not r.resolveWorldTarget then return true end
+        if r.prevalidateWorldMove and self.Active==r then
+            -- A delayed move needs a new preparation outside cursor ownership.
+            -- Never invoke its route resolver while holding the physical cursor.
+            self:release('prepared_move_reprepare_required');return false
+        end
         if not self:ResolveWorld(r) or not self:valid(r) then self:release(r.reason or 'world_resolution_declined');return false end
-        if r.prevalidateWorldCast then self:PrepareWorldCommit(r) end
+        if r.prevalidatedWorld then self:PrepareWorldCommit(r) end
         if clock()>r.expires then self:release('expired');return false end
         if clock()>=r.budgetEnd-r.hold then
             self.Timing:observePreparation(r,clock(),true)

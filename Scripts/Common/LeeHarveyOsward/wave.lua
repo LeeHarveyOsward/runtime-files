@@ -51,15 +51,29 @@ function Wave:attackWait()
     if a.ServerStart then return math.max(0,a.ServerStart+self:cycle()-c:now()) end
     return self:cycle()
 end
-function Wave:damage(slot,m)
+function Wave:aaDamage(m,evaluation)
+    if not evaluation then return self.ctx:aaDamage(m) end
+    if evaluation.aa[m]==nil then evaluation.aa[m]=self.ctx:aaDamage(m) end
+    return evaluation.aa[m]
+end
+function Wave:spellDamage(slot,m,evaluation)
+    if not evaluation then return self.ctx:spellDamageEstimate(slot,m,1) end
+    local rows=evaluation.spells[slot]
+    if not rows then rows={};evaluation.spells[slot]=rows end
+    if rows[m]==nil then rows[m]=self.ctx:spellDamageEstimate(slot,m,1) end
+    return rows[m]
+end
+function Wave:damage(slot,m,evaluation)
     local c=self.ctx
     if not U.valid(m) or m.team==myHero.team or m.team==300 then return 0 end
-    local lane=false
-    for _,unit in ipairs(c.minions or {}) do if U.same(m,unit) then lane=true;break end end
+    local lane=evaluation and evaluation.units[m] or false
+    if not lane then
+        for _,unit in ipairs(c.minions or {}) do if U.same(m,unit) then lane=true;break end end
+    end
     if not lane then return 0 end
     local verified=c.config:get('mechanicsVerified') or c.profile.damageVerified
     if not verified and not c.config:get('laneEstimates') then return 0 end
-    return c:spellDamageEstimate(slot,m,1)*(1-c.config:get('laneDamageMargin')/100)
+    return self:spellDamage(slot,m,evaluation)*(1-c.config:get('laneDamageMargin')/100)
 end
 function Wave:reservedTarget(m)
     local r=self.reserved[U.id(m)]
@@ -71,13 +85,14 @@ end
 function Wave:reserve(units,event,delay)
     for _,m in ipairs(units) do self.reserved[U.id(m)]={event=event,untilTime=self.ctx:now()+delay+.2} end
 end
-function Wave:attackTarget(anchor)
+function Wave:attackTarget(anchor,units,evaluation)
     local c=self.ctx;local last,lastHP,lastDeadline=nil,math.huge,math.huge;local push,pushHP=nil,-1;local incoming=false
     local cycle=self:cycle();local wait=self:attackWait()
-    for _,m in ipairs(self:units(anchor)) do
+    for _,m in ipairs(units or self:units(anchor)) do
         if not self:reservedTarget(m) and U.dist(myHero.pos,m.pos)<=c:attackRange(m) then
             local hp=self:healthAt(m,wait+self:impact(m));local nextHP=self:healthAt(m,wait+self:impact(m)+cycle)
-            if hp>0 and hp<=c:aaDamage(m) then
+            local damage=self:aaDamage(m,evaluation)
+            if hp>0 and hp<=damage then
                 local deadline=math.huge
                 if nextHP<=0 then
                     for step=1,4 do
@@ -89,22 +104,22 @@ function Wave:attackTarget(anchor)
                     last,lastHP,lastDeadline=m,hp,deadline
                 end
             end
-            if hp>c:aaDamage(m) and nextHP<=c:aaDamage(m) then incoming=true end
-            if hp>c:aaDamage(m) and hp>pushHP then push,pushHP=m,hp end
+            if hp>damage and nextHP<=damage then incoming=true end
+            if hp>damage and hp>pushHP then push,pushHP=m,hp end
         end
     end
     return last or (not incoming and push or nil),last~=nil,incoming
 end
 -- Bounded earliest-deadline AA simulation. Forecasts are estimates: reject
 -- wave softening if any newly endangered minion lacks an AA/Q rescue slot.
-function Wave:schedule(units,damage,castDelay,boost,effectAt)
+function Wave:schedule(units,damage,castDelay,boost,effectAt,evaluation)
     local c=self.ctx;local horizon=c.config:get('waveHorizon');local step=.1
     local saved,deadlines={},{};local at=self:attackWait()+c:windup()+c.latency*.5+(castDelay or 0)
     local attackable,attackDamage={},{};local cycle=self:cycle()
     local function hp(m,t)return self:healthAt(m,t)-(t>=(effectAt or 0) and damage and damage[U.id(m)] or 0)end
     for _,m in ipairs(units) do
         attackable[m]=U.dist(myHero.pos,m.pos)<=c:attackRange(m)
-        if attackable[m] then attackDamage[m]=c:aaDamage(m) end
+        if attackable[m] then attackDamage[m]=self:aaDamage(m,evaluation) end
         if not self:reservedTarget(m) then
             if hp(m,0)<=0 then deadlines[U.id(m)]=0
             elseif hp(m,horizon)<=0 then
@@ -134,7 +149,7 @@ function Wave:schedule(units,damage,castDelay,boost,effectAt)
     end
     return saved,deadlines
 end
-function Wave:canSoften(units,slot,primary,rescue,lastOnly)
+function Wave:canSoften(units,slot,primary,rescue,lastOnly,evaluation)
     local c=self.ctx;local damage={};local affected=0;local delay=.25+c.latency*.5
     if slot==0 then delay=delay+U.dist(myHero.pos,primary.pos)/c.profile.qSpeed
         if self:healthAt(primary,delay)<=0 then return false end
@@ -143,32 +158,32 @@ function Wave:canSoften(units,slot,primary,rescue,lastOnly)
         if slot==2 and U.dist(myHero.pos,m.pos)<=c.profile.eRange or slot==0 and U.same(m,primary) then
             -- Use the full estimate for future HP depletion, the lower estimate
             -- for claiming kills. The uncertainty band never certifies a kill.
-            damage[U.id(m)]=c:spellDamageEstimate(slot,m,1);affected=affected+1
+            damage[U.id(m)]=self:spellDamage(slot,m,evaluation);affected=affected+1
         end
     end
     if affected==0 or slot==2 and affected<2 and not rescue then return false end
-    local saved,deadlines=self:schedule(units,damage,.25,false,delay)
-    local baseline=rescue and self:schedule(units) or nil
+    local saved,deadlines=self:schedule(units,damage,.25,false,delay,evaluation)
+    local baseline=rescue and self:schedule(units,nil,nil,nil,nil,evaluation) or nil
     local qAvailable=slot~=0 and c.config:get(lastOnly and 'lastQ' or 'waveQ') and c:stage(0)==1 and c:ready(0)
         and (myHero.mana or 0)>=(c:spell(slot).mana or 0)+(c:spell(0).mana or 0)
     local qRescue,required=nil,{}
     for _,m in ipairs(units) do
         local id=U.id(m);local hit=damage[id] or 0;local hp=self:healthAt(m,delay)
-        local killed=hit>0 and hp>0 and hp<=self:damage(slot,m)
+        local killed=hit>0 and hp>0 and hp<=self:damage(slot,m,evaluation)
         local protect=not rescue or baseline[id] or hit>0 and self:healthAt(m,c.config:get('waveHorizon'))>0
         if not killed and not self:reservedTarget(m) and deadlines[id] and protect then required[id]=m end
         if required[id] and not saved[id] then
             local qDelay=.25+.25+U.dist(myHero.pos,m.pos)/c.profile.qSpeed+c.latency*.5
             local after=self:healthAt(m,qDelay)-hit
             local point=qAvailable and c.spells:predict(m)
-            if qAvailable and point and after>0 and after<=self:damage(0,m) and #c.spells:blockers(m,point)==0 then
+            if qAvailable and point and after>0 and after<=self:damage(0,m,evaluation) and #c.spells:blockers(m,point)==0 then
                 qAvailable=false;qRescue=id
             else return false end
         end
     end
     if qRescue then
         local remaining={};for _,m in ipairs(units) do if U.id(m)~=qRescue then remaining[#remaining+1]=m end end
-        local later=self:schedule(remaining,damage,.5,false,delay)
+        local later=self:schedule(remaining,damage,.5,false,delay,evaluation)
         for id in pairs(required) do if id~=qRescue and not later[id] then return false end end
     end
     return true
@@ -203,30 +218,39 @@ function Wave:attackLocked()
 end
 function Wave:tick(anchor,beforeAttack,lastOnly)
     self.forecastAt=nil
-    local c=self.ctx;local units=self:units(anchor);local aa,hasLastHit,incoming=self:attackTarget(anchor)
+    local c=self.ctx
     if not c.config:get(lastOnly and 'lastAbilities' or 'waveAbilities') then return false end
     if not c.config:get('mechanicsVerified') and not c.profile.damageVerified then
         c.status=c.config:get('laneEstimates') and 'Lane Q/E: profile estimates (margin applied)' or 'Lane Q/E paused: damage estimates disabled'
     end
     if c.sdk.Orbwalker:IsAutoAttacking() or self:attackLocked() then return false end
-    local useQ=c.config:get(lastOnly and 'lastQ' or 'waveQ');local useE=c.config:get(lastOnly and 'lastE' or 'waveE')
+    local useQ=c.config:get(lastOnly and 'lastQ' or 'waveQ') and c:stage(0)==1 and c:ready(0)
+    local useE=c.config:get(lastOnly and 'lastE' or 'waveE') and c:stage(2)==1 and c:ready(2)
+    local useW=c.config:get(lastOnly and 'lastW' or 'waveW') and c:ready(1)
+    if not useQ and not useE and not useW then return false end
+    local units=self:units(anchor)
+    -- Reuse damage only inside this synchronous decision. No pending action or
+    -- later callback receives this table; cast validation remains fresh.
+    local evaluation={aa={},spells={},units={}}
+    for _,m in ipairs(units) do evaluation.units[m]=true end
+    local aa,hasLastHit,incoming=self:attackTarget(anchor,units,evaluation)
     local eKills,qSaves={},{}
     local eDelay=.25+c.latency*.5
     local cycle=self:cycle();local wait=self:attackWait()
-    local aaSaved=self:schedule(units)
+    local aaSaved=(useQ or useE or lastOnly and useW) and self:schedule(units,nil,nil,nil,nil,evaluation) or {}
     for _,m in ipairs(units) do
         if not self:reservedTarget(m) then
-            local ehp=self:healthAt(m,eDelay)
-            if useE and c:stage(2)==1 and c:ready(2) and U.dist(myHero.pos,m.pos)<=c.profile.eRange and ehp>0 and ehp<=self:damage(2,m) then
-                eKills[#eKills+1]=m
+            if useE and U.dist(myHero.pos,m.pos)<=c.profile.eRange then
+                local ehp=self:healthAt(m,eDelay)
+                if ehp>0 and ehp<=self:damage(2,m,evaluation) then eKills[#eKills+1]=m end
             end
-            if useQ and not aaSaved[U.id(m)] and c:stage(0)==1 and c:ready(0) then
+            if useQ and not aaSaved[U.id(m)] then
                 local point=c.spells:predict(m)
                 if point then
                     local qDelay=.25+U.dist(myHero.pos,point)/c.profile.qSpeed+c.latency*.5
                     local qhp=self:healthAt(m,qDelay)
                     local aaLater=self:healthAt(m,wait+self:impact(m)+(U.same(m,aa) and 0 or cycle))
-                    if qhp>0 and qhp<=self:damage(0,m)
+                    if qhp>0 and qhp<=self:damage(0,m,evaluation)
                         and (aaLater<=0 or U.dist(myHero.pos,m.pos)>c:attackRange(m)) then
                         qSaves[#qSaves+1]={unit=m,delay=qDelay,hp=qhp}
                     end
@@ -253,7 +277,7 @@ function Wave:tick(anchor,beforeAttack,lastOnly)
     end
     local eNeeded=not lastOnly
     for _,m in ipairs(eKills) do if not aaSaved[U.id(m)] then eNeeded=true end end
-    if (#eKills>=2 or eRescue) and not waitForAA and eNeeded and self:canSoften(units,2,nil,true,lastOnly) then
+    if (#eKills>=2 or eRescue) and not waitForAA and eNeeded and self:canSoften(units,2,nil,true,lastOnly,evaluation) then
         if self:cast(2,eKills[1],eKills,eDelay) then return true end
     end
     -- Let GG issue an imminent last hit first; save a different minion after
@@ -272,16 +296,16 @@ function Wave:tick(anchor,beforeAttack,lastOnly)
     end
     if not beforeAttack and not hasLastHit and not incoming then
         if not lastOnly and c.config:get('waveSoften') then
-            if useE and c:stage(2)==1 and c:ready(2) and self:canSoften(units,2) then
-                for _,m in ipairs(units) do if U.dist(myHero.pos,m.pos)<=c.profile.eRange and self:damage(2,m)>0 then
+            if useE and self:canSoften(units,2,nil,nil,nil,evaluation) then
+                for _,m in ipairs(units) do if U.dist(myHero.pos,m.pos)<=c.profile.eRange and self:damage(2,m,evaluation)>0 then
                     if self:cast(2,m,eKills,eDelay) then return true end;break
                 end end
             end
         end
-        if c.config:get(lastOnly and 'lastW' or 'waveW') and not c.clear:weaving() then
+        if useW and not c.clear:weaving() then
             local useful=not lastOnly and U.hp(myHero)<90 and #units>=2
             if lastOnly then
-                local faster,deadlines=self:schedule(units,nil,0,true)
+                local faster,deadlines=self:schedule(units,nil,0,true,nil,evaluation)
                 for id in pairs(deadlines) do if not aaSaved[id] and faster[id] then useful=true end end
             end
             if useful then return self:cast(1,myHero) end

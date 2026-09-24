@@ -210,7 +210,7 @@ function ClassicTwitch:EKS()
 end
 
 function ClassicTwitch:CastW(unit)
-	local WPrediction = GGPrediction:SpellPrediction(self.WSpell)
+	local WPrediction = V2:Prediction(self.WSpell)
 	WPrediction:GetPrediction(unit, myHero)
 	if WPrediction:CanHit(3) then
 		Control.CastSpell(HK_W, WPrediction.CastPosition)

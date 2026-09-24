@@ -246,7 +246,7 @@ function ClassicPantheon:KillSteal()
 end
 
 function ClassicPantheon:CastE(target)
-	local prediction = GGPrediction:SpellPrediction(self.ESpell)
+	local prediction = V2:Prediction(self.ESpell)
 	prediction:GetPrediction(target, myHero)
 	if prediction:CanHit(2) then
 		return Control.CastSpell(HK_E, prediction.CastPosition)

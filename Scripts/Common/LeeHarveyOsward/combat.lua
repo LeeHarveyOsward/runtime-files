@@ -341,14 +341,15 @@ function B:defense()
     local c=self.ctx
     if not c.config:get('idleDefense') or self.wards.pending or self.insec or c:combatTransit() then return false end
     if c.config:get('reserveW') then return c.emergencyShield:tick() end
-    local threatened=c:threats(myHero.pos,850)>0
-    if c:stage(1)==1 and threatened and U.hp(myHero)<=c.config:get('shieldHP') then
+    if c:stage(1)~=1 or not c:ready(1) then return false end
+    if U.hp(myHero)<=c.config:get('shieldHP') and c:threats(myHero.pos,850)>0 then
         return self.spells:w(myHero,'defense',true)
     end
     if c:stage(1)==1 then
         for _,a in ipairs(c.allies or {}) do
-            if U.hp(a)<=c.config:get('allyShieldHP') and c:threats(a.pos,700)>0 and not c:underTurret(a.pos)
-                and U.dist(myHero.pos,a.pos)<=c.profile.wRange then return self.spells:w(a,'defense',true) end
+            if U.valid(a) and U.dist(myHero.pos,a.pos)<=c.profile.wRange
+                and U.hp(a)<=c.config:get('allyShieldHP') and c:threats(a.pos,700)>0 and not c:underTurret(a.pos)
+                then return self.spells:w(a,'defense',true) end
         end
     end
     return false

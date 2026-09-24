@@ -117,7 +117,7 @@ function ClassicAshe:SemiManualR()
 end
 
 function ClassicAshe:CastW(target)
-	local WPrediction = GGPrediction:SpellPrediction(self.WSpell)
+	local WPrediction = V2:Prediction(self.WSpell)
 	WPrediction:GetPrediction(target, myHero)
 	if WPrediction:CanHit(2) then
 		Control.CastSpell(HK_W, WPrediction.CastPosition)
@@ -125,7 +125,7 @@ function ClassicAshe:CastW(target)
 end
 
 function ClassicAshe:CastR(target)
-	local RPrediction = GGPrediction:SpellPrediction(self.RSpell)
+	local RPrediction = V2:Prediction(self.RSpell)
 	RPrediction:GetPrediction(target, myHero)
 	if RPrediction:CanHit(3) then
 		Control.CastSpell(HK_R, RPrediction.CastPosition)

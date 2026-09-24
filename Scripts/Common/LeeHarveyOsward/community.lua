@@ -45,6 +45,17 @@ return function(a)
     end
     function a:hasCursorQueue() return true end
     function a:request(q)
+        if q.owner~='autosmite' then
+            local validate=q.validate;local guard=q.commitGuard
+            q.validate=function(...)
+                if c.sdk.Evade and type(c.sdk.Evade.Evading)=='function' and c.sdk.Evade:Evading()then return false,'evade_intervention'end
+                return validate(...)
+            end
+            if guard then q.commitGuard=function(...)
+                if c.sdk.Evade and type(c.sdk.Evade.Evading)=='function' and c.sdk.Evade:Evading()then return false,'evade_intervention'end
+                return guard(...)
+            end end
+        end
         local id,why=self.scope:Request(q)
         if not id then return false,why end
         self.lastCursorAction=id;self.owners[q.owner]=id

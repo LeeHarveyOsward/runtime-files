@@ -332,7 +332,7 @@ end
 
 function ClassicMissFortune:CastGGPred(spell, unit)
 	if spell == HK_E then
-		local EPrediction = GGPrediction:SpellPrediction(self.ESpell)
+		local EPrediction = V2:Prediction(self.ESpell)
 		EPrediction:GetPrediction(unit, myHero)
 		if EPrediction:CanHit(3) then
 			Control.CastSpell(HK_E, EPrediction.CastPosition)

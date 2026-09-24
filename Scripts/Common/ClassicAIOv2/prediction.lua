@@ -5,6 +5,15 @@ return function(provider, hero, vector)
     local function settingsCopy(t)
         local out={};for k,v in pairs(t)do out[k]=type(v)=='table' and settingsCopy(v) or v end;return out
     end
+    local function sameSettings(a,b)
+        for k,v in pairs(a) do
+            if type(v)=='table' then
+                if type(b[k])~='table' or not sameSettings(v,b[k]) then return false end
+            elseif v~=b[k] then return false end
+        end
+        for k in pairs(b) do if a[k]==nil then return false end end
+        return true
+    end
     function P:Resolve(binding)
         local object=binding.object
         if binding.aoe then
@@ -64,6 +73,18 @@ return function(provider, hero, vector)
             return out
         end
         return setmetatable(wrapper,{__index=object})
+    end
+    -- Controller opt-in: reuse construction, never prediction results. A new
+    -- configuration gets a new object so queued bindings keep their old geometry.
+    -- The public SpellPrediction factory still returns independent objects.
+    P.cache=setmetatable({},{__mode='k'})
+    function P:ForSettings(settings)
+        local row=self.cache[settings]
+        if not row or not sameSettings(settings,row.settings) then
+            row={settings=settingsCopy(settings),object=facade:SpellPrediction(settings)}
+            self.cache[settings]=row
+        end
+        return row.object
     end
     P.facade=facade;return P
 end

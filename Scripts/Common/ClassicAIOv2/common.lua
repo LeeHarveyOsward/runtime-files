@@ -138,7 +138,7 @@ end
 function GetEnemyCount(range, unit)
 	local count = 0
 	local Range = range * range
-	for _, hero in ipairs(_G.SDK.ObjectManager:GetEnemyHeroes()) do
+	for _, hero in ipairs(V2:DecisionUnits('GetEnemyHeroes')) do
 		if IsValid(hero) and GetDistanceSqr(unit, hero.pos) < Range then
 			count = count + 1
 		end
@@ -149,7 +149,7 @@ end
 function GetMinionCount(range, unit)
 	local count = 0
 	local Range = range * range
-	for _, minion in ipairs(_G.SDK.ObjectManager:GetEnemyMinions()) do
+	for _, minion in ipairs(V2:DecisionUnits('GetEnemyMinions')) do
 		if IsValid(minion) and GetDistanceSqr(unit, minion.pos) < Range then
 			count = count + 1
 		end
@@ -160,7 +160,7 @@ end
 function GetAllyCount(range, unit)
 	local count = 0
 	local Range = range * range
-	for _, hero in ipairs(_G.SDK.ObjectManager:GetAllyHeroes()) do
+	for _, hero in ipairs(V2:DecisionUnits('GetAllyHeroes')) do
 		if IsValid(hero) and GetDistanceSqr(unit, hero.pos) < Range then
 			count = count + 1
 		end
@@ -351,7 +351,7 @@ function ShouldWait()
 end
 
 function CastSpellAOE(spellSlot, spellData, minHitCount, source, mainTarget)
-	local SpellPred = GGPrediction:SpellPrediction(spellData)
+	local SpellPred = V2:Prediction(spellData)
 	local aoeResults = SpellPred:GetAOEPrediction(source)
 	if #aoeResults == 0 then
 		return false
@@ -375,4 +375,3 @@ function CastSpellAOE(spellSlot, spellData, minHitCount, source, mainTarget)
 	end
 	return false
 end
-

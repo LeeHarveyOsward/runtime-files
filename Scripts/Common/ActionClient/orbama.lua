@@ -4,7 +4,8 @@ return function(g, sdk, active, options)
     local capabilities=api:GetCapabilities()
     local scope=assert(api:RegisterScope(options.name,{priorities={'critical','interactive','normal','background'}}))
     -- Only capabilities exposed by this facade, not unrelated raw-scope methods.
-    local clientCaps={surviveMovementCommands=capabilities.surviveMovementCommands,
+    local clientCaps={prevalidateWorldCast=capabilities.prevalidateWorldCast,prevalidateWorldMove=capabilities.prevalidateWorldMove,
+        worldCommitMaxMs=capabilities.worldCommitMaxMs,surviveMovementCommands=capabilities.surviveMovementCommands,
         survivePointerMotion=capabilities.survivePointerMotion,resolveWorldTarget=capabilities.resolveWorldTarget,
         automationClaims=capabilities.automationClaims,automationFunctions=capabilities.automationFunctions,
         actionCleanupState=capabilities.actionCleanupState,aimCandidates=capabilities.aimCandidates,
@@ -21,7 +22,8 @@ return function(g, sdk, active, options)
             dependency=intent.dependency,dependencyState=intent.dependencyState,ready=intent.ready,handoff=intent.handoff,
             verifyTarget=intent.verifyTarget,aimCandidates=intent.aimCandidates,aimFallback=intent.aimFallback,
             retryKey=intent.retryKey,world=intent.world,count=intent.count,approach=intent.approach,
-            survivePointerMotion=intent.survivePointerMotion,
+            survivePointerMotion=intent.survivePointerMotion,prevalidateWorldCast=intent.prevalidateWorldCast,
+            prevalidateWorldMove=intent.prevalidateWorldMove,commitGuard=intent.commitGuard,
             validate=function(_,resolved)if not active() then return false,'inactive_instance' end;return intent.mechanical(resolved) end}
         -- An independent resolved skillshot keeps its gameplay target while the
         -- player orbwalks. Opt into the provider's bounded correction centrally;

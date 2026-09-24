@@ -36,7 +36,7 @@ return function(input, clock, selectCandidate)
             priorities={'critical','interactive','normal','background'},scopes=true,sequences=true,
             aimCandidates=true,aimFallback=true,maxAimCandidates=5,retryKeys=true,observations=true,keyedMechanicalObservation=true,maxWaitingPerScope=32,maxWaiting=128,
             attackApproach=type(input.env.executeApproach)=='function',
-            independentMotion=false,withholdInput=false,hideCursor=false,survivePointerMotion=true,surviveMovementCommands=true,resolveWorldTarget=true,prevalidateWorldCast=true,worldCommitMaxMs=20,automationClaims=true,automationFunctions={"cleanse","qss"}}
+            independentMotion=false,withholdInput=false,hideCursor=false,survivePointerMotion=true,surviveMovementCommands=true,resolveWorldTarget=true,prevalidateWorldCast=true,prevalidateWorldMove=true,worldCommitMaxMs=20,automationClaims=true,automationFunctions={"cleanse","qss"}}
     end
     function api:GetAvailability()
         return {available=input:Available() and not input.Uncertain,busy=input.Active~=nil or input.Step>0,
@@ -255,11 +255,15 @@ return function(input, clock, selectCandidate)
         if q.type=='chord' and #keys~=2 then return nil,'invalid_chord' end
         if q.dependency then local d=self.actions[q.dependency];if not d or d.scope~=scope then return nil,'invalid_dependency' end end
         if q.dependencyState and q.dependencyState~='sent' and q.dependencyState~='mechanical' and q.dependencyState~='effect' then return nil,'invalid_dependency_state' end
-        if q.resolveWorldTarget~=nil and (type(q.resolveWorldTarget)~='function' or q.type~='cast' or q.targetKind~='world' or q.world or q.handoff) then return nil,'invalid_world_resolver' end
+        if q.resolveWorldTarget~=nil and (type(q.resolveWorldTarget)~='function' or (q.type~='cast' and q.type~='move') or q.targetKind~='world' or q.world or q.handoff) then return nil,'invalid_world_resolver' end
         if q.prevalidateWorldCast~=nil and (type(q.prevalidateWorldCast)~='boolean'
-            or q.prevalidateWorldCast and (not q.resolveWorldTarget or #keys~=1 or q.verifyTarget
+            or q.prevalidateWorldCast and (q.type~='cast' or not q.resolveWorldTarget or #keys~=1 or q.verifyTarget
                 or q.aimCandidates or q.dependency or q.handoff)) then return nil,'invalid_prevalidated_cast' end
-        if q.commitGuard~=nil and (not q.prevalidateWorldCast or type(q.commitGuard)~='function') then return nil,'invalid_commit_guard' end
+        if q.prevalidateWorldMove~=nil and (type(q.prevalidateWorldMove)~='boolean'
+            or q.prevalidateWorldMove and (q.type~='move' or not q.resolveWorldTarget or #keys~=0
+                or q.verifyTarget or q.aimCandidates or q.dependency or q.handoff)) then return nil,'invalid_prevalidated_move' end
+        if q.type=='move' and q.resolveWorldTarget and not q.prevalidateWorldMove then return nil,'prepared_move_required' end
+        if q.commitGuard~=nil and (not (q.prevalidateWorldCast or q.prevalidateWorldMove) or type(q.commitGuard)~='function') then return nil,'invalid_commit_guard' end
         if q.ready and type(q.ready)~='function' then return nil,'invalid_condition' end
         if q.aimCandidates and (type(q.aimCandidates)~='function' or q.targetKind~='object') then return nil,'invalid_aim_candidates' end
         if q.aimFallback and (type(q.aimFallback)~='function' or not q.aimCandidates) then return nil,'invalid_aim_fallback' end
@@ -283,7 +287,8 @@ return function(input, clock, selectCandidate)
             end
         end
         r.resolveWorldTarget=q.resolveWorldTarget;r.intentTargetID=q.intentTargetID
-        r.prevalidateWorldCast=q.prevalidateWorldCast==true;r.commitGuard=q.commitGuard
+        r.prevalidateWorldCast=q.prevalidateWorldCast==true;r.prevalidateWorldMove=q.prevalidateWorldMove==true
+        r.prevalidatedWorld=r.prevalidateWorldCast or r.prevalidateWorldMove;r.commitGuard=q.commitGuard
         r.publicScope=scope;r.priorityClass=p;r.publicType=q.type;r.approach=q.approach==true
         r.surviveMovementCommands=q.surviveMovementCommands==true
         r.survivePointerMotion=q.survivePointerMotion==true or r.surviveMovementCommands

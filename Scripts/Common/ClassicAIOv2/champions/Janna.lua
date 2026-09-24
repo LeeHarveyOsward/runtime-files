@@ -88,7 +88,7 @@ end
 
 function ClassicJanna:StartQ(target, hc)
 	if not IsReady(_Q) or self:IsQCharging() then return false end
-	local p = GGPrediction:SpellPrediction(self.QSpell)
+	local p = V2:Prediction(self.QSpell)
 	p:GetPrediction(target, myHero)
 	if p:CanHit(hc or 2) then
 		if not Control.CastSpell(HK_Q, p.CastPosition) then return false end
@@ -100,6 +100,7 @@ function ClassicJanna:StartQ(target, hc)
 end
 
 function ClassicJanna:Combo()
+	if not (Menu.Combo.Q:Value() and IsReady(_Q)) and not (Menu.Combo.W:Value() and IsReady(_W)) then return end
 	local target = GetTarget(self.QSpell.Range)
 	if not IsValid(target) or not target.pos2D.onScreen then return end
 	if Menu.Combo.Q:Value() and self:StartQ(target, 2) then return end
@@ -108,6 +109,7 @@ end
 
 function ClassicJanna:Harass()
 	if myHero.maxMana > 0 and myHero.mana / myHero.maxMana * 100 < Menu.Harass.Mana:Value() then return end
+	if not (Menu.Harass.Q:Value() and IsReady(_Q)) and not (Menu.Harass.W:Value() and IsReady(_W)) then return end
 	local target = GetTarget(self.QSpell.Range)
 	if not IsValid(target) or not target.pos2D.onScreen then return end
 	if Menu.Harass.Q:Value() and self:StartQ(target, 3) then return end
@@ -116,24 +118,33 @@ end
 
 function ClassicJanna:AutoE()
 	if not Menu.Auto.E:Value() or not IsReady(_E) or lastE + 250 >= GetTickCount() then return end
-	local enemies = _G.SDK.ObjectManager:GetEnemyHeroes(2500)
 	local allies = _G.SDK.ObjectManager:GetAllyHeroes(self.ERange)
-	local turrets = _G.SDK.ObjectManager:GetEnemyTurrets(1500)
+	local threats, turrets
 	for _, ally in ipairs(allies) do
 		local option = Menu.Auto.Etarget[ally.charName]
 		if IsValid(ally) and option and option:Value() then
 			local canuse = IsPoison(ally)
 			if not canuse then
-				for _, enemy in ipairs(enemies) do
+				if not threats then
+					threats = {}
+					for _, enemy in ipairs(_G.SDK.ObjectManager:GetEnemyHeroes(2500)) do
+						if IsValid(enemy) then
+							local spell = enemy.activeSpell
+							if spell and spell.valid then threats[#threats + 1] = {enemy=enemy, spell=spell} end
+						end
+					end
+				end
+				for _, threat in ipairs(threats) do
+					local enemy, spell = threat.enemy, threat.spell
 					if IsValid(enemy) then
-						local spell = enemy.activeSpell
-						if spell and spell.valid then
+						if spell.valid then
 							if spell.target == ally.handle then
 								canuse = true
 								break
 							else
 								local spellWidth = spell.width or 0
-								local endPos = spell.startPos:Extended(spell.placementPos, (spell.range or 0) + spellWidth)
+								local endPos = threat.endPos or spell.startPos:Extended(spell.placementPos, (spell.range or 0) + spellWidth)
+								threat.endPos = endPos
 								local point, isOnSegment = GGPrediction:ClosestPointOnLineSegment(ally.pos, endPos, enemy.pos)
 								local width = ally.boundingRadius + (spellWidth > 0 and spellWidth or 0)
 								if isOnSegment and GGPrediction:IsInRange(point, ally.pos, width) then
@@ -145,6 +156,7 @@ function ClassicJanna:AutoE()
 					end
 				end
 				if not canuse then
+					turrets = turrets or _G.SDK.ObjectManager:GetEnemyTurrets(1500)
 					for _, turret in ipairs(turrets) do
 						if turret and turret.targetID == ally.networkID then
 							canuse = true
@@ -212,8 +224,8 @@ function ClassicJanna:Flee()
 		Control.CastSpell(HK_E, myHero)
 		return
 	end
-	local target = GetTarget(self.WRange)
-	if IsValid(target) and IsReady(_W) then
+	local target = IsReady(_W) and GetTarget(self.WRange)
+	if IsValid(target) then
 		Control.CastSpell(HK_W, target)
 		return
 	end

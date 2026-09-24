@@ -139,7 +139,7 @@ function ClassicLeona:SemiR()
 	if not IsValid(target) or not target.pos2D.onScreen then return false end
 	local count = Menu.SemiR.Count:Value()
 	if count > 1 then return CastSpellAOE(HK_R, self.RSpell, count, myHero, target) and true or false end
-	local p = GGPrediction:SpellPrediction(self.RSpell)
+	local p = V2:Prediction(self.RSpell)
 	p:GetPrediction(target, myHero)
 	if p:CanHit(3) then
 		return Control.CastSpell(HK_R, p.CastPosition)
@@ -155,7 +155,7 @@ function ClassicLeona:KillSteal()
 				if self:CastE(target, 3) then return end
 			end
 			if Menu.KillSteal.R:Value() and IsReady(_R) and self:GetRDmg(target) >= hp then
-				local p = GGPrediction:SpellPrediction(self.RSpell)
+				local p = V2:Prediction(self.RSpell)
 				p:GetPrediction(target, myHero)
 				if p:CanHit(3) then
 					Control.CastSpell(HK_R, p.CastPosition)
@@ -167,7 +167,7 @@ function ClassicLeona:KillSteal()
 end
 
 function ClassicLeona:CastE(target, hc)
-	local p = GGPrediction:SpellPrediction(self.ESpell)
+	local p = V2:Prediction(self.ESpell)
 	p:GetPrediction(target, myHero)
 	if p:CanHit(hc or 2) then
 		return Control.CastSpell(HK_E, p.CastPosition)

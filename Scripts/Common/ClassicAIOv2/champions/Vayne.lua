@@ -10,7 +10,7 @@ function ClassicVayne:__init()
 	Callback.Add("Draw", function() self:Draw() end)
 	Callback.Add("Tick", function() self:OnTick() end)
 	self.ESpell = {Type = GGPrediction.SPELLTYPE_LINE, Delay = 0.25, Radius = 0, Range = 680, Speed = 2200, Collision = true, CollisionTypes = {GGPrediction.COLLISION_YASUOWALL}}
-	self.EPrediction=GGPrediction:SpellPrediction(self.ESpell)
+	self.EPrediction=V2:Prediction(self.ESpell)
 end
 
 function ClassicVayne:LoadMenu()

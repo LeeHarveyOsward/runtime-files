@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "repository": "LeeHarveyOsward/runtime-files",
-  "release": "5",
+  "release": "6",
   "packages": [
     {
       "id": "orbama",
       "name": "Orbama",
-      "version": "5",
+      "version": "6",
       "depends": [],
       "enable": [
         "Orbama.lua"
@@ -18,15 +18,15 @@
         {
           "source": "Orbama.lua",
           "destination": "LOLEXT/Scripts/Orbama.lua",
-          "sha256": "e36e2189baf51a88e71ab776df95e1deb00a38b7e84a3f2b82c88c02508c309b",
-          "size": 514243
+          "sha256": "8410a7eb0a3d9bbba15ed518a22746b57596af41937ecd7db4e02cdfb9f44ce0",
+          "size": 521024
         }
       ]
     },
     {
       "id": "lho",
       "name": "LeeHarveyOsward (Lee Sin)",
-      "version": "5",
+      "version": "6",
       "depends": [
         "orbama"
       ],
@@ -38,15 +38,15 @@
         {
           "source": "LeeHarveyOsward.lua",
           "destination": "LOLEXT/Scripts/LeeHarveyOsward.lua",
-          "sha256": "902646e497b7a9e44872ddc34ef4fa7e899320dab7697f1e3cbf01db6bc49114",
-          "size": 814781
+          "sha256": "590577a296a584bd2c7423db721ae4b422699caa26b3b8c28a7865c0f6c2d4a3",
+          "size": 824810
         }
       ]
     },
     {
       "id": "classic",
       "name": "ClassicAIO for Orbama (Classic mode)",
-      "version": "5",
+      "version": "6",
       "depends": [
         "orbama"
       ],
@@ -61,8 +61,72 @@
         {
           "source": "ClassicAIO_Orbama.lua",
           "destination": "LOLEXT/Scripts/ClassicAIO_Orbama.lua",
-          "sha256": "384a86b8b8923b3be6cd00c8eab4837762f13f92db6f5963ac30922a2470cd23",
-          "size": 430079
+          "sha256": "e54c783ebdfbe9dad0fb884997ab9f5479fea69a154d363cd008056816a1369b",
+          "size": 435729
+        }
+      ]
+    },
+    {
+      "id": "evade",
+      "name": "Orbama Evade",
+      "version": "6",
+      "depends": [
+        "orbama"
+      ],
+      "enable": [
+        "OrbamaEvade.lua"
+      ],
+      "disable": [],
+      "files": [
+        {
+          "source": "OrbamaEvade.lua",
+          "destination": "LOLEXT/Scripts/OrbamaEvade.lua",
+          "sha256": "33d4c429c06a857f7cb6bc61288177b1e5bd53fc59516b34be58ab3d84386e31",
+          "size": 3280076
+        }
+      ]
+    },
+    {
+      "id": "katahari",
+      "name": "Kata Hari (Katarina)",
+      "version": "6",
+      "depends": [
+        "orbama"
+      ],
+      "enable": [
+        "KataHari.lua"
+      ],
+      "disable": [
+        "Katarina.lua"
+      ],
+      "files": [
+        {
+          "source": "KataHari.lua",
+          "destination": "LOLEXT/Scripts/KataHari.lua",
+          "sha256": "08eb235435222eeb3fc591a016280db512396f901ef8819a2a47b48e274174be",
+          "size": 161543
+        }
+      ]
+    },
+    {
+      "id": "cardmarx",
+      "name": "Card Marx (Twisted Fate)",
+      "version": "6",
+      "depends": [
+        "orbama"
+      ],
+      "enable": [
+        "CardMarx.lua"
+      ],
+      "disable": [
+        "TwistedFate.lua"
+      ],
+      "files": [
+        {
+          "source": "CardMarx.lua",
+          "destination": "LOLEXT/Scripts/CardMarx.lua",
+          "sha256": "2fd336f06f1eda25eb355903fc79ed3303429481b01d09899ba3024c0a7aae46",
+          "size": 160169
         }
       ]
     }

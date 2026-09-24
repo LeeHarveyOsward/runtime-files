@@ -1,4 +1,4 @@
--- Release 5
+-- Release 6
 local supported={["Ahri"]=true,["Akali"]=true,["Ashe"]=true,["Blitzcrank"]=true,["Corki"]=true,["Ezreal"]=true,["Fiora"]=true,["Janna"]=true,["Katarina"]=true,["KogMaw"]=true,["Leona"]=true,["MasterYi"]=true,["MissFortune"]=true,["Pantheon"]=true,["Ryze"]=true,["Sivir"]=true,["Skarner"]=true,["Teemo"]=true,["Tristana"]=true,["Twitch"]=true,["Vayne"]=true}
 if not myHero or not supported[myHero.charName:match('^Jade_(.+)$') or ''] then return end
 if not SDK then print('[ClassicAIOv2] SDK required');return end
@@ -228,7 +228,7 @@ return function(env,hash,builtin,origin,package)
 end
 
 end)()
-client=create(_G,hash,5,"https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files",{names={'ClassicAIOv2'},channel='classic',cachePrefix='runtime-classic-'})
+client=create(_G,hash,6,"https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files",{names={'ClassicAIOv2'},channel='classic',cachePrefix='runtime-classic-'})
 _G.ClassicAIOv2ReleaseClient=client
 end
 return client:Boot("ClassicAIOv2",function()
@@ -1558,7 +1558,7 @@ transports["gg"]=(function()
 return function(g,sdk,active,options)
     assert(not sdk.OrbamaVersion,'Original GG required')
     local A={falseIsRejection=options.ggFalseIsRejection~=false,name='OriginalGG',queue={},records={},serial=0,history={},caps={
-        surviveMovementCommands=false,resolveWorldTarget=false,automationClaims=false,
+        surviveMovementCommands=false,resolveWorldTarget=false,automationClaims=false,prevalidateWorldCast=false,prevalidateWorldMove=false,
         cancelSubmitted=false,observedExecution=false,privateQueue=true,updatePriority=true}}
     sdk.ActionClientGG=sdk.ActionClientGG or {};local providers=sdk.ActionClientGG;providers[#providers+1]=A
     local rank={critical=4,interactive=3,normal=2,background=1}
@@ -1571,7 +1571,7 @@ return function(g,sdk,active,options)
     function A:Capabilities() return self.caps end
     function A:Available() return not sdk.Cursor or sdk.Cursor.Step==0 end
     function A:Submit(q)
-        for _,name in ipairs({'verifyTarget','aimCandidates','aimFallback','retryKey','world','count','approach','handoff','survivePointerMotion'})do
+        for _,name in ipairs({'verifyTarget','aimCandidates','aimFallback','retryKey','world','count','approach','handoff','survivePointerMotion','prevalidateWorldCast','prevalidateWorldMove','commitGuard'})do
             if q[name]~=nil and q[name]~=false then return nil,'GG_unsupported_option:'..name end
         end
         if q.type~='cast' and q.type~='attack' and q.type~='move' then return nil,'GG_unsupported_type' end
@@ -1696,7 +1696,8 @@ return function(g, sdk, active, options)
     local capabilities=api:GetCapabilities()
     local scope=assert(api:RegisterScope(options.name,{priorities={'critical','interactive','normal','background'}}))
     -- Only capabilities exposed by this facade, not unrelated raw-scope methods.
-    local clientCaps={surviveMovementCommands=capabilities.surviveMovementCommands,
+    local clientCaps={prevalidateWorldCast=capabilities.prevalidateWorldCast,prevalidateWorldMove=capabilities.prevalidateWorldMove,
+        worldCommitMaxMs=capabilities.worldCommitMaxMs,surviveMovementCommands=capabilities.surviveMovementCommands,
         survivePointerMotion=capabilities.survivePointerMotion,resolveWorldTarget=capabilities.resolveWorldTarget,
         automationClaims=capabilities.automationClaims,automationFunctions=capabilities.automationFunctions,
         actionCleanupState=capabilities.actionCleanupState,aimCandidates=capabilities.aimCandidates,
@@ -1713,7 +1714,8 @@ return function(g, sdk, active, options)
             dependency=intent.dependency,dependencyState=intent.dependencyState,ready=intent.ready,handoff=intent.handoff,
             verifyTarget=intent.verifyTarget,aimCandidates=intent.aimCandidates,aimFallback=intent.aimFallback,
             retryKey=intent.retryKey,world=intent.world,count=intent.count,approach=intent.approach,
-            survivePointerMotion=intent.survivePointerMotion,
+            survivePointerMotion=intent.survivePointerMotion,prevalidateWorldCast=intent.prevalidateWorldCast,
+            prevalidateWorldMove=intent.prevalidateWorldMove,commitGuard=intent.commitGuard,
             validate=function(_,resolved)if not active() then return false,'inactive_instance' end;return intent.mechanical(resolved) end}
         -- An independent resolved skillshot keeps its gameplay target while the
         -- player orbwalks. Opt into the provider's bounded correction centrally;
@@ -1813,10 +1815,44 @@ return function(g,transports,options)
     function C:Now()return transport:Now()end
     function C:Capabilities()
         local c=copy(transport:Capabilities());c.contexts=true;c.resources=true;c.replaceUnsent=true
-        c.observationTracking=true;c.boundedHistory=true;c.scopedConditions=true;c.sharedClientVersion=1
+        c.observationTracking=true;c.boundedHistory=true;c.scopedConditions=true;c.sharedClientVersion=1;c.emergencyResourceRelease=true
         return c
     end
     function C:Available()return transport:Available()end
+    function C:RegisterEmergencyYield(callback)
+        if self.closed or self.resolving or type(callback)~='function'then return false end
+        self.emergencyYield=callback;return true
+    end
+    function C:CooperateWithEvade(policy)
+        if self.closed or self.resolving or type(policy)~='table'or type(policy.committed)~='function'
+            or type(policy.yield)~='function'then return false end
+        self.evadePolicy=policy;return true
+    end
+    function C:YieldUnsent(resource)
+        if self.closed or self.resolving then return false end
+        for id,q in pairs(self.jobs)do if not resource or q.resource==resource then
+            local r=self:Poll(id)
+            if r and not r.sentAt then self:Cancel(id,'evade_emergency');self:Finish(id)end
+        end end
+        if resource then return hub.resources[resource]==nil end
+        return true
+    end
+    function C:RequestEmergencyRelease(resource,evidence)
+        if self.closed or self.resolving or type(evidence)~='table' or evidence.likelyDeath~=true
+            or type(evidence.expires)~='number' or evidence.expires<self:Now()
+            or evidence.expires>self:Now()+250 then return false,'emergency_evidence_required'end
+        local lease=hub.resources[resource]
+        if not lease then return true end
+        local owner=lease.client
+        if owner==self then return false,'already_owned'end
+        local record=owner:Poll(lease.id)
+        if not record or record.sentAt or record.cleanupPending then return false,'resource_in_flight'end
+        if not owner.emergencyYield then return false,'owner_declined'end
+        local ok,accepted=pcall(owner.emergencyYield,resource,copy(evidence),lease.id)
+        if not ok or accepted~=true then return false,'owner_declined'end
+        -- Only the owner can cancel and release. A callback's true is not release.
+        return hub.resources[resource]==nil,hub.resources[resource]and 'owner_release_pending' or nil
+    end
     function C:IsSending()return transport.sending==true end
     function C:Condition(owner,name,condition,exceptions)
         if self.resolving then return false,'resolver_side_effect'end
@@ -1829,6 +1865,7 @@ return function(g,transports,options)
 if self.gates[token]then self.gates[token]=nil;return true end;return false end
     function C:ContextValid(q,phase)
         if self.closed or not active() or g.myHero.dead or g.Game.IsChatOpen() or not g.Game.IsOnTop() then return false,'context_unavailable' end
+        if self.evadePolicy and sdk.Evade and type(sdk.Evade.Evading)=='function' and sdk.Evade:Evading()and not q.evadeCompatible then return false,'evade_intervention'end
         local c=q.context
         if c then
             if c.modes then local yes=false;for _,mode in ipairs(c.modes)do if sdk.Orbwalker.Modes[mode]then yes=true end end;if not yes then return false,'mode_ended' end end
@@ -2061,6 +2098,15 @@ return function(provider, hero, vector)
     local function settingsCopy(t)
         local out={};for k,v in pairs(t)do out[k]=type(v)=='table' and settingsCopy(v) or v end;return out
     end
+    local function sameSettings(a,b)
+        for k,v in pairs(a) do
+            if type(v)=='table' then
+                if type(b[k])~='table' or not sameSettings(v,b[k]) then return false end
+            elseif v~=b[k] then return false end
+        end
+        for k in pairs(b) do if a[k]==nil then return false end end
+        return true
+    end
     function P:Resolve(binding)
         local object=binding.object
         if binding.aoe then
@@ -2121,6 +2167,18 @@ return function(provider, hero, vector)
         end
         return setmetatable(wrapper,{__index=object})
     end
+    -- Controller opt-in: reuse construction, never prediction results. A new
+    -- configuration gets a new object so queued bindings keep their old geometry.
+    -- The public SpellPrediction factory still returns independent objects.
+    P.cache=setmetatable({},{__mode='k'})
+    function P:ForSettings(settings)
+        local row=self.cache[settings]
+        if not row or not sameSettings(settings,row.settings) then
+            row={settings=settingsCopy(settings),object=facade:SpellPrediction(settings)}
+            self.cache[settings]=row
+        end
+        return row.object
+    end
     P.facade=facade;return P
 end
 
@@ -2171,7 +2229,7 @@ modules["core"]=(function()
 return function(g, modules, champion)
     local sdk=g.SDK;local registry=g.ClassicAIOv2
     if registry and registry.Shutdown then registry:Shutdown('superseded') end
-    local C={version='2.1.8',generation=(registry and registry.generation or 0)+1,enabled=true,
+    local C={version='2.1.11',generation=(registry and registry.generation or 0)+1,enabled=true,
         pending={},resources={},history={},quarantine={},observedSpells={},spellStates={},locks={},menus={},diagnostics={},metrics={requested=0,sent=0,observed=0,rejected=0},claims={}}
     g.ClassicAIOv2=C
     function C:Trace()end
@@ -2200,6 +2258,15 @@ return function(g, modules, champion)
         C.adapter=sdk.Actions:CreateClient(clientOptions)
     else C.adapter=modules.actionClient(g,clientOptions)end
     local A=C.adapter
+    if A.CooperateWithEvade then
+        A:CooperateWithEvade({committed=function()return C.locks.move==true or C.locks.attack==true end,
+            yield=function(evidence)
+                if not evidence.likelyDeath then return false end
+                A:YieldUnsent();C.locks={};A:SetBlocked('champion','attack',false);A:SetBlocked('champion','move',false)
+                return true
+            end})
+        A:RegisterEmergencyYield(function(resource)return A:YieldUnsent(resource)end)
+    end
     local keyedMechanical=A:Capabilities().keyedMechanicalObservation==true
     function C:Available()
         return self:Active() and not g.myHero.dead and not g.Game.IsChatOpen() and g.Game.IsOnTop()
@@ -2209,6 +2276,20 @@ return function(g, modules, champion)
     env.SDK=setmetatable({},{__index=sdk});env.V2=C
     local prediction=modules.prediction(assert(g.GGPrediction,'Prediction provider must be loaded'),g.myHero,g.Vector)
     env.GGPrediction=prediction.facade;C.prediction=prediction
+    function C:Prediction(settings)return prediction:ForSettings(settings)end
+    function C:DecisionUnits(method)
+        local scope=not self.validating and self.evaluation
+        if scope and scope[method] then return scope[method] end
+        local manager=sdk.ObjectManager
+        local units=manager[method](manager)
+        if scope then
+            -- Keep a private identity list; positions, health and validity are
+            -- read by each consumer. Never lend an SDK scratch array to a cache.
+            local copy={};for i=1,#units do copy[i]=units[i] end
+            scope[method]=copy;return copy
+        end
+        return units
+    end
     local slots={}
     for _,name in ipairs({'Q','W','E','R','SUMMONER_1','SUMMONER_2'})do slots[g['HK_'..name]]=g['_'..name] or g[name] end
     for i=1,7 do if g['HK_ITEM_'..i] then slots[g['HK_ITEM_'..i]]=g['ITEM_'..i] end end
@@ -2219,6 +2300,8 @@ return function(g, modules, champion)
     end
     function C:Invoke(fn,selfObject,args,name)
         if not self:Active() then return end
+        local root=self.evaluation==nil
+        if root then self.evaluation={} end
         local old=self.decision;local previousContext=self.executionContext
         local declaration=self.policy and self.policy.methods[name]
         if not previousContext and declaration then self.executionContext=declaration(selfObject) end
@@ -2226,6 +2309,7 @@ return function(g, modules, champion)
             self.decision={name=name,menuReads={}}
         end
         local results={pcall(fn,selfObject,unpack(args))};self.decision=old;self.executionContext=previousContext
+        if root then self.evaluation=nil end
         if not results[1] then self:Trace('callback_error',{method=name,error=tostring(results[2])});self:Shutdown('champion_callback_error');error(results[2],0) end
         return unpack(results,2)
     end
@@ -2329,6 +2413,8 @@ return function(g, modules, champion)
         if policy.channel then A:Condition('champion','channel',function(q)return self:Fresh(policy.channel,self.champion,q)end,policy.exceptions)end
     end
     function C:Cast(key,target,options)
+        -- An input handoff ends decision-local reuse, even if sending declines.
+        if self.evaluation then self.evaluation={} end
         options=options or {};local binding=target and prediction.bindings[target]
         local targetObject=options.intentTarget or target and target.pos and target or binding and binding.target
         local targetID=targetObject and (targetObject.networkID or targetObject.handle)
@@ -2410,6 +2496,9 @@ return function(g, modules, champion)
         local prior=self.resources[resource]
         if prior and prior.id~=id then
             prior.cancelled=true;prior.callbacks={};self.pending[prior.key]=nil
+            local previous=A:Poll(prior.id)
+            prior.outcome=(prior.sentAt or previous and previous.sentAt) and 'unobserved_handoff' or 'replaced_before_send'
+            self:FinishIntent(prior,previous)
         end
         q.id=id;self.pending[key]=q;self.resources[resource]=q;self.lastIntent=q
         return true,id
@@ -2479,12 +2568,17 @@ return function(g, modules, champion)
                     end
                 end
             end
-            if not self.pending[key] then
-                A:Finish(q.id)
-                if self.resources[q.resource]==q then self.resources[q.resource]=nil end
-                self.history[#self.history+1]={id=q.id,owner=q.owner,key=q.key,resource=q.resource,outcome=q.outcome,sentAt=q.sentAt,observedAt=q.observedAt};if #self.history>128 then table.remove(self.history,1)end
-            end
+            if not self.pending[key] then self:FinishIntent(q,r) end
         end
+    end
+    function C:FinishIntent(q,r)
+        local key=q.key
+        if not q.sentAt and r and r.sentAt then q.sentAt=r.sentAt;self.metrics.sent=self.metrics.sent+1 end
+        q.outcome=q.outcome or (q.observedAt and 'mechanically_observed' or not q.sentAt and 'rejected_before_send' or 'unobserved')
+        A:Finish(q.id)
+        if self.resources[q.resource]==q then self.resources[q.resource]=nil end
+        self.history[#self.history+1]={id=q.id,owner=q.owner,key=q.key,resource=q.resource,outcome=q.outcome,sentAt=q.sentAt,observedAt=q.observedAt}
+        if #self.history>128 then table.remove(self.history,1)end
     end
     function C:Automation(name,on)
         if A.name=='Orbama' then
@@ -2666,7 +2760,7 @@ end
 function GetEnemyCount(range, unit)
 	local count = 0
 	local Range = range * range
-	for _, hero in ipairs(_G.SDK.ObjectManager:GetEnemyHeroes()) do
+	for _, hero in ipairs(V2:DecisionUnits('GetEnemyHeroes')) do
 		if IsValid(hero) and GetDistanceSqr(unit, hero.pos) < Range then
 			count = count + 1
 		end
@@ -2677,7 +2771,7 @@ end
 function GetMinionCount(range, unit)
 	local count = 0
 	local Range = range * range
-	for _, minion in ipairs(_G.SDK.ObjectManager:GetEnemyMinions()) do
+	for _, minion in ipairs(V2:DecisionUnits('GetEnemyMinions')) do
 		if IsValid(minion) and GetDistanceSqr(unit, minion.pos) < Range then
 			count = count + 1
 		end
@@ -2688,7 +2782,7 @@ end
 function GetAllyCount(range, unit)
 	local count = 0
 	local Range = range * range
-	for _, hero in ipairs(_G.SDK.ObjectManager:GetAllyHeroes()) do
+	for _, hero in ipairs(V2:DecisionUnits('GetAllyHeroes')) do
 		if IsValid(hero) and GetDistanceSqr(unit, hero.pos) < Range then
 			count = count + 1
 		end
@@ -2879,7 +2973,7 @@ function ShouldWait()
 end
 
 function CastSpellAOE(spellSlot, spellData, minHitCount, source, mainTarget)
-	local SpellPred = GGPrediction:SpellPrediction(spellData)
+	local SpellPred = V2:Prediction(spellData)
 	local aoeResults = SpellPred:GetAOEPrediction(source)
 	if #aoeResults == 0 then
 		return false
@@ -2903,7 +2997,6 @@ function CastSpellAOE(spellSlot, spellData, minHitCount, source, mainTarget)
 	end
 	return false
 end
-
 
 end
 env.CheckChatBlock=CheckChatBlock
@@ -3530,6 +3623,14 @@ end
 -- Survival - Seraph''s / Zhonya''s / Barrier for self, Locket / Heal for team
 -- ---------------------------------------------------------------------------------
 
+local function LocketNeeded()
+	local defense = ActivatorMenu.Defensive
+	return defense.Enabled:Value() and defense.Locket.Enabled:Value()
+		and ForEachAlly(600, function(ally)
+			return HealthPercent(ally) <= defense.Locket.HP:Value()
+		end)
+end
+
 local function Survival()
 	local defensiveOn = ActivatorMenu.Defensive.Enabled:Value()
 	local enemies = GetEnemyCount(ActivatorMenu.Defensive.Zhonyas.EnemyRange:Value(), myHero.pos)
@@ -3551,14 +3652,8 @@ local function Survival()
 	end
 
 	-- Locket of the Iron Solari
-	if defensiveOn and ActivatorMenu.Defensive.Locket.Enabled:Value()
-		and HasClassicItem(ITEM_LOCKET) and ItemReady(ITEM_LOCKET) then
-		local hpLimit = ActivatorMenu.Defensive.Locket.HP:Value()
-		ForEachAlly(700, function(ally)
-			if HealthPercent(ally) > hpLimit then return false end
-			if GetDistance(ally.pos) > 700 then return false end
-			return CastItem(ITEM_LOCKET)
-		end)
+	if HasClassicItem(ITEM_LOCKET) and ItemReady(ITEM_LOCKET) and LocketNeeded() then
+		CastItem(ITEM_LOCKET)
 	end
 end
 
@@ -3873,7 +3968,7 @@ ValidateItem=function(id,target)
     end
     if id==ITEM_SERAPH then return defense.Enabled:Value() and defense.Seraph.Enabled:Value() and HealthPercent(myHero)<=defense.Seraph.HP:Value()end
     if id==ITEM_ZHONYAS then return defense.Enabled:Value() and defense.Zhonyas.Enabled:Value() and HealthPercent(myHero)<=defense.Zhonyas.HP:Value() and GetEnemyCount(defense.Zhonyas.EnemyRange:Value(),myHero.pos)>0 end
-    if id==ITEM_LOCKET then return defense.Enabled:Value() and defense.Locket.Enabled:Value() and ForEachAlly(600,function(ally)return HealthPercent(ally)<=defense.Locket.HP:Value()end)end
+    if id==ITEM_LOCKET then return LocketNeeded()end
     if id==ITEM_RANDUIN then return defense.Enabled:Value() and defense.Randuin.Enabled:Value() and GetEnemyCount(defense.Randuin.Range:Value(),myHero.pos)>0 end
     local potion=({[ITEM_HP_POTION]='HealthPotion',[ITEM_MANA_POTION]='ManaPotion',[ITEM_FLASK]='Flask',[ITEM_BISCUIT]='Biscuit'})[id]
     if potion then
@@ -4048,9 +4143,12 @@ end
 function ClassicAhri:Clear()
 	if not Menu.Clear.Enabled:Value() then return end
 	if myHero.maxMana > 0 and myHero.mana / myHero.maxMana * 100 < Menu.Clear.Mana:Value() then return end
-	if not IsUnderTurret(myHero) then
-		local minions = _G.SDK.ObjectManager:GetEnemyMinions(self.QSpell.Range)
-		if Menu.Clear.Q:Value() > 0 and IsReady(_Q) then
+	local qReady, wReady = IsReady(_Q), IsReady(_W) and lastW + 250 < GetTickCount()
+	if not qReady and not wReady then return end
+	local laneQ, laneW = Menu.Clear.Q:Value() > 0 and qReady, Menu.Clear.W:Value() > 0 and wReady
+	if (laneQ or laneW) and not IsUnderTurret(myHero) then
+		if laneQ then
+			local minions = _G.SDK.ObjectManager:GetEnemyMinions(self.QSpell.Range)
 			for _, minion in ipairs(minions) do
 				if IsValid(minion) and minion.team ~= 300 and minion.pos2D.onScreen and minion.distance <= self.QSpell.Range and GetMinionCount(180, minion.pos) >= Menu.Clear.Q:Value() then
 					Control.CastSpell(HK_Q, minion.pos)
@@ -4058,21 +4156,23 @@ function ClassicAhri:Clear()
 				end
 			end
 		end
-		if Menu.Clear.W:Value() > 0 and IsReady(_W) and lastW + 250 < GetTickCount() and GetMinionCount(700, myHero.pos) >= Menu.Clear.W:Value() then
+		if laneW and GetMinionCount(700, myHero.pos) >= Menu.Clear.W:Value() then
 			Control.CastSpell(HK_W)
 			V2:AfterCast(HK_W, function() lastW = GetTickCount() end)
 			return
 		end
 	end
+	local jungleQ, jungleW = Menu.Clear.JungleQ:Value() and qReady, Menu.Clear.JungleW:Value() and wReady
+	if not jungleQ and not jungleW then return end
 	local monsters = _G.SDK.ObjectManager:GetMonsters(self.QSpell.Range)
 	table.sort(monsters, function(a, b) return a.maxHealth > b.maxHealth end)
 	local target = monsters[1]
 	if not IsValid(target) or not target.pos2D.onScreen then return end
-	if Menu.Clear.JungleQ:Value() and IsReady(_Q) then
+	if jungleQ then
 		Control.CastSpell(HK_Q, target.pos)
 		return
 	end
-	if Menu.Clear.JungleW:Value() and IsReady(_W) and lastW + 250 < GetTickCount() and target.distance <= 700 then
+	if jungleW and target.distance <= 700 then
 		Control.CastSpell(HK_W)
 		V2:AfterCast(HK_W, function() lastW = GetTickCount() end)
 	end
@@ -4080,13 +4180,13 @@ end
 
 function ClassicAhri:CastGGPred(spell, target)
 	if spell == HK_Q then
-		local QPrediction = GGPrediction:SpellPrediction(self.QSpell)
+		local QPrediction = V2:Prediction(self.QSpell)
 		QPrediction:GetPrediction(target, myHero)
 		if QPrediction:CanHit(3) then
 			Control.CastSpell(HK_Q, QPrediction.CastPosition)
 		end
 	elseif spell == HK_E then
-		local EPrediction = GGPrediction:SpellPrediction(self.ESpell)
+		local EPrediction = V2:Prediction(self.ESpell)
 		EPrediction:GetPrediction(target, myHero)
 		if EPrediction:CanHit(3) then
 			Control.CastSpell(HK_E, EPrediction.CastPosition)
@@ -4502,7 +4602,7 @@ function ClassicAshe:SemiManualR()
 end
 
 function ClassicAshe:CastW(target)
-	local WPrediction = GGPrediction:SpellPrediction(self.WSpell)
+	local WPrediction = V2:Prediction(self.WSpell)
 	WPrediction:GetPrediction(target, myHero)
 	if WPrediction:CanHit(2) then
 		Control.CastSpell(HK_W, WPrediction.CastPosition)
@@ -4510,7 +4610,7 @@ function ClassicAshe:CastW(target)
 end
 
 function ClassicAshe:CastR(target)
-	local RPrediction = GGPrediction:SpellPrediction(self.RSpell)
+	local RPrediction = V2:Prediction(self.RSpell)
 	RPrediction:GetPrediction(target, myHero)
 	if RPrediction:CanHit(3) then
 		Control.CastSpell(HK_R, RPrediction.CastPosition)
@@ -4789,7 +4889,7 @@ function ClassicBlitzcrank:KillSteal()
 end
 
 function ClassicBlitzcrank:CastQ(target, hc)
-	local p = GGPrediction:SpellPrediction(self.QSpell)
+	local p = V2:Prediction(self.QSpell)
 	p:GetPrediction(target, myHero)
 	if p:CanHit(hc or 2) then
 		return Control.CastSpell(HK_Q, p.CastPosition)
@@ -4967,7 +5067,7 @@ function ClassicCorki:AutoQ()
 end
 
 function ClassicCorki:CastQ(target)
-	local QPrediction = GGPrediction:SpellPrediction(self.QSpell)
+	local QPrediction = V2:Prediction(self.QSpell)
 	QPrediction:GetPrediction(target, myHero)
 	if QPrediction:CanHit(3) then
 		Control.CastSpell(HK_Q, QPrediction.CastPosition)
@@ -4976,7 +5076,7 @@ end
 
 function ClassicCorki:CastR(target)
 	if HaveBuff(myHero, "Jade_CorkiR_Check") then
-		local R2Prediction = GGPrediction:SpellPrediction(self.R2Spell)
+		local R2Prediction = V2:Prediction(self.R2Spell)
 		R2Prediction:GetPrediction(target, myHero)
 		if R2Prediction:CanHit(3) then
 			local _, collisionObjects, collisionCount = GGPrediction:GetCollision(myHero.pos, R2Prediction.CastPosition, self.R2Spell.Speed, self.R2Spell.Delay, self.R2Spell.Radius, {GGPrediction.COLLISION_MINION}, target.networkID)
@@ -4990,7 +5090,7 @@ function ClassicCorki:CastR(target)
 			end
 		end
 	else
-		local R1Prediction = GGPrediction:SpellPrediction(self.R1Spell)
+		local R1Prediction = V2:Prediction(self.R1Spell)
 		R1Prediction:GetPrediction(target, myHero)
 		if R1Prediction:CanHit(3) then
 			local _, collisionObjects, collisionCount = GGPrediction:GetCollision(myHero.pos, R1Prediction.CastPosition, self.R1Spell.Speed, self.R1Spell.Delay, self.R1Spell.Radius, {GGPrediction.COLLISION_MINION}, target.networkID)
@@ -5476,7 +5576,7 @@ function ClassicEzreal:AutoR()
 		end
 	end		
 	if Menu.Auto.RAOE:Value() then
-		local RPrediction = GGPrediction:SpellPrediction(self.RSpell)
+		local RPrediction = V2:Prediction(self.RSpell)
 		local aoeResults = RPrediction:GetAOEPrediction(myHero)
 		local bestResult = nil
 		for i = 1, #aoeResults do
@@ -5543,7 +5643,7 @@ function ClassicEzreal:GetRDmg(unit)
 end
 
 function ClassicEzreal:CastQ(unit)
-	local QPrediction = GGPrediction:SpellPrediction(self.QSpell)
+	local QPrediction = V2:Prediction(self.QSpell)
 	QPrediction:GetPrediction(unit, myHero)
 	if QPrediction:CanHit(3) then
 		if Control.CastSpell(HK_Q, QPrediction.CastPosition) then
@@ -5555,7 +5655,7 @@ function ClassicEzreal:CastQ(unit)
 end
 
 function ClassicEzreal:CastW(unit)
-	local WPrediction = GGPrediction:SpellPrediction(self.WSpell)
+	local WPrediction = V2:Prediction(self.WSpell)
 	WPrediction:GetPrediction(unit, myHero)
 	if WPrediction:CanHit(3) then
 		Control.CastSpell(HK_W, WPrediction.CastPosition)
@@ -5563,7 +5663,7 @@ function ClassicEzreal:CastW(unit)
 end
 
 function ClassicEzreal:CastR(unit)
-	local RPrediction = GGPrediction:SpellPrediction(self.RSpell)
+	local RPrediction = V2:Prediction(self.RSpell)
 	RPrediction:GetPrediction(unit, myHero)
 	if RPrediction:CanHit(3) then
 		Control.CastSpell(HK_R, RPrediction.CastPosition)
@@ -6167,7 +6267,7 @@ end
 
 function ClassicJanna:StartQ(target, hc)
 	if not IsReady(_Q) or self:IsQCharging() then return false end
-	local p = GGPrediction:SpellPrediction(self.QSpell)
+	local p = V2:Prediction(self.QSpell)
 	p:GetPrediction(target, myHero)
 	if p:CanHit(hc or 2) then
 		if not Control.CastSpell(HK_Q, p.CastPosition) then return false end
@@ -6179,6 +6279,7 @@ function ClassicJanna:StartQ(target, hc)
 end
 
 function ClassicJanna:Combo()
+	if not (Menu.Combo.Q:Value() and IsReady(_Q)) and not (Menu.Combo.W:Value() and IsReady(_W)) then return end
 	local target = GetTarget(self.QSpell.Range)
 	if not IsValid(target) or not target.pos2D.onScreen then return end
 	if Menu.Combo.Q:Value() and self:StartQ(target, 2) then return end
@@ -6187,6 +6288,7 @@ end
 
 function ClassicJanna:Harass()
 	if myHero.maxMana > 0 and myHero.mana / myHero.maxMana * 100 < Menu.Harass.Mana:Value() then return end
+	if not (Menu.Harass.Q:Value() and IsReady(_Q)) and not (Menu.Harass.W:Value() and IsReady(_W)) then return end
 	local target = GetTarget(self.QSpell.Range)
 	if not IsValid(target) or not target.pos2D.onScreen then return end
 	if Menu.Harass.Q:Value() and self:StartQ(target, 3) then return end
@@ -6195,24 +6297,33 @@ end
 
 function ClassicJanna:AutoE()
 	if not Menu.Auto.E:Value() or not IsReady(_E) or lastE + 250 >= GetTickCount() then return end
-	local enemies = _G.SDK.ObjectManager:GetEnemyHeroes(2500)
 	local allies = _G.SDK.ObjectManager:GetAllyHeroes(self.ERange)
-	local turrets = _G.SDK.ObjectManager:GetEnemyTurrets(1500)
+	local threats, turrets
 	for _, ally in ipairs(allies) do
 		local option = Menu.Auto.Etarget[ally.charName]
 		if IsValid(ally) and option and option:Value() then
 			local canuse = IsPoison(ally)
 			if not canuse then
-				for _, enemy in ipairs(enemies) do
+				if not threats then
+					threats = {}
+					for _, enemy in ipairs(_G.SDK.ObjectManager:GetEnemyHeroes(2500)) do
+						if IsValid(enemy) then
+							local spell = enemy.activeSpell
+							if spell and spell.valid then threats[#threats + 1] = {enemy=enemy, spell=spell} end
+						end
+					end
+				end
+				for _, threat in ipairs(threats) do
+					local enemy, spell = threat.enemy, threat.spell
 					if IsValid(enemy) then
-						local spell = enemy.activeSpell
-						if spell and spell.valid then
+						if spell.valid then
 							if spell.target == ally.handle then
 								canuse = true
 								break
 							else
 								local spellWidth = spell.width or 0
-								local endPos = spell.startPos:Extended(spell.placementPos, (spell.range or 0) + spellWidth)
+								local endPos = threat.endPos or spell.startPos:Extended(spell.placementPos, (spell.range or 0) + spellWidth)
+								threat.endPos = endPos
 								local point, isOnSegment = GGPrediction:ClosestPointOnLineSegment(ally.pos, endPos, enemy.pos)
 								local width = ally.boundingRadius + (spellWidth > 0 and spellWidth or 0)
 								if isOnSegment and GGPrediction:IsInRange(point, ally.pos, width) then
@@ -6224,6 +6335,7 @@ function ClassicJanna:AutoE()
 					end
 				end
 				if not canuse then
+					turrets = turrets or _G.SDK.ObjectManager:GetEnemyTurrets(1500)
 					for _, turret in ipairs(turrets) do
 						if turret and turret.targetID == ally.networkID then
 							canuse = true
@@ -6291,8 +6403,8 @@ function ClassicJanna:Flee()
 		Control.CastSpell(HK_E, myHero)
 		return
 	end
-	local target = GetTarget(self.WRange)
-	if IsValid(target) and IsReady(_W) then
+	local target = IsReady(_W) and GetTarget(self.WRange)
+	if IsValid(target) then
 		Control.CastSpell(HK_W, target)
 		return
 	end
@@ -6896,19 +7008,19 @@ end
 
 function ClassicKogMaw:CastGGPred(spell, target)
 	if spell == HK_Q then
-		local QPrediction = GGPrediction:SpellPrediction(self.QSpell)
+		local QPrediction = V2:Prediction(self.QSpell)
 		QPrediction:GetPrediction(target, myHero)
 		if QPrediction:CanHit(3) then
 			return Control.CastSpell(HK_Q, QPrediction.CastPosition)
 		end
 	elseif spell == HK_E then
-		local EPrediction = GGPrediction:SpellPrediction(self.ESpell)
+		local EPrediction = V2:Prediction(self.ESpell)
 		EPrediction:GetPrediction(target, myHero)
 		if EPrediction:CanHit(3) then
 			return Control.CastSpell(HK_E, EPrediction.CastPosition)
 		end
 	elseif spell == HK_R then
-		local RPrediction = GGPrediction:SpellPrediction(self.RSpell)
+		local RPrediction = V2:Prediction(self.RSpell)
 		RPrediction:GetPrediction(target, myHero)
 		if RPrediction:CanHit(3) then
 			return Control.CastSpell(HK_R, RPrediction.CastPosition)
@@ -7102,7 +7214,7 @@ function ClassicLeona:SemiR()
 	if not IsValid(target) or not target.pos2D.onScreen then return false end
 	local count = Menu.SemiR.Count:Value()
 	if count > 1 then return CastSpellAOE(HK_R, self.RSpell, count, myHero, target) and true or false end
-	local p = GGPrediction:SpellPrediction(self.RSpell)
+	local p = V2:Prediction(self.RSpell)
 	p:GetPrediction(target, myHero)
 	if p:CanHit(3) then
 		return Control.CastSpell(HK_R, p.CastPosition)
@@ -7118,7 +7230,7 @@ function ClassicLeona:KillSteal()
 				if self:CastE(target, 3) then return end
 			end
 			if Menu.KillSteal.R:Value() and IsReady(_R) and self:GetRDmg(target) >= hp then
-				local p = GGPrediction:SpellPrediction(self.RSpell)
+				local p = V2:Prediction(self.RSpell)
 				p:GetPrediction(target, myHero)
 				if p:CanHit(3) then
 					Control.CastSpell(HK_R, p.CastPosition)
@@ -7130,7 +7242,7 @@ function ClassicLeona:KillSteal()
 end
 
 function ClassicLeona:CastE(target, hc)
-	local p = GGPrediction:SpellPrediction(self.ESpell)
+	local p = V2:Prediction(self.ESpell)
 	p:GetPrediction(target, myHero)
 	if p:CanHit(hc or 2) then
 		return Control.CastSpell(HK_E, p.CastPosition)
@@ -7788,7 +7900,7 @@ end
 
 function ClassicMissFortune:CastGGPred(spell, unit)
 	if spell == HK_E then
-		local EPrediction = GGPrediction:SpellPrediction(self.ESpell)
+		local EPrediction = V2:Prediction(self.ESpell)
 		EPrediction:GetPrediction(unit, myHero)
 		if EPrediction:CanHit(3) then
 			Control.CastSpell(HK_E, EPrediction.CastPosition)
@@ -8108,7 +8220,7 @@ function ClassicPantheon:KillSteal()
 end
 
 function ClassicPantheon:CastE(target)
-	local prediction = GGPrediction:SpellPrediction(self.ESpell)
+	local prediction = V2:Prediction(self.ESpell)
 	prediction:GetPrediction(target, myHero)
 	if prediction:CanHit(2) then
 		return Control.CastSpell(HK_E, prediction.CastPosition)
@@ -8658,7 +8770,7 @@ end
 
 function ClassicSivir:CastQ(target)
     if IsReady(_Q) and target.pos2D.onScreen then
-        local Pred = GGPrediction:SpellPrediction(self.Q)
+        local Pred = V2:Prediction(self.Q)
         Pred:GetPrediction(target, myHero)
         if Pred:CanHit(GGPrediction.HITCHANCE_HIGH) then
             Control.CastSpell(HK_Q, Pred.CastPosition)
@@ -8964,7 +9076,7 @@ function ClassicSkarner:KillSteal()
 end
 
 function ClassicSkarner:CastE(target)
-	local prediction = GGPrediction:SpellPrediction(self.ESpell)
+	local prediction = V2:Prediction(self.ESpell)
 	prediction:GetPrediction(target, myHero)
 	if prediction:CanHit(3) then
 		return Control.CastSpell(HK_E, prediction.CastPosition)
@@ -9114,7 +9226,7 @@ function ClassicTeemo:Harass()
 end
 
 function ClassicTeemo:CastR(t)
-	local p = GGPrediction:SpellPrediction(self.RSpell)
+	local p = V2:Prediction(self.RSpell)
 	p:GetPrediction(t, myHero)
 	if not p:CanHit(2) then return false end
 	if self.lastRPos and GetTickCount() - self.lastRTime < 3000 and GetDistance(self.lastRPos, p.CastPosition) < 150 then return false end
@@ -9636,7 +9748,7 @@ function ClassicTwitch:EKS()
 end
 
 function ClassicTwitch:CastW(unit)
-	local WPrediction = GGPrediction:SpellPrediction(self.WSpell)
+	local WPrediction = V2:Prediction(self.WSpell)
 	WPrediction:GetPrediction(unit, myHero)
 	if WPrediction:CanHit(3) then
 		Control.CastSpell(HK_W, WPrediction.CastPosition)
@@ -9734,7 +9846,7 @@ function ClassicVayne:__init()
 	Callback.Add("Draw", function() self:Draw() end)
 	Callback.Add("Tick", function() self:OnTick() end)
 	self.ESpell = {Type = GGPrediction.SPELLTYPE_LINE, Delay = 0.25, Radius = 0, Range = 680, Speed = 2200, Collision = true, CollisionTypes = {GGPrediction.COLLISION_YASUOWALL}}
-	self.EPrediction=GGPrediction:SpellPrediction(self.ESpell)
+	self.EPrediction=V2:Prediction(self.ESpell)
 end
 
 function ClassicVayne:LoadMenu()
@@ -10034,4 +10146,4 @@ if not ctx:Active() then return ctx end
 modules.runtime(ctx.env,champion)
 return ctx
 
-end,5)
+end,6)

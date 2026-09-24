@@ -170,7 +170,7 @@ end
 
 function ClassicSivir:CastQ(target)
     if IsReady(_Q) and target.pos2D.onScreen then
-        local Pred = GGPrediction:SpellPrediction(self.Q)
+        local Pred = V2:Prediction(self.Q)
         Pred:GetPrediction(target, myHero)
         if Pred:CanHit(GGPrediction.HITCHANCE_HIGH) then
             Control.CastSpell(HK_Q, Pred.CastPosition)

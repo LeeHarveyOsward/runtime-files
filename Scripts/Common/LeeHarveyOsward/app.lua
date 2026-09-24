@@ -132,6 +132,13 @@ function App:preMove(args)
     -- jungle and lane clear share a key. Routing/kiting ownership belongs to J.
     if mode=='fight' or mode=='clear' or mode=='gg_last' or mode=='harass' or mode=='gg' then
         if not c.sdk.Orbwalker.ForceMovement then
+            -- Preserve Orbama's physical-pointer click path. It owns the final
+            -- focus/hover/ownership validation and never needs a world warp.
+            -- Hovered units still use the bounded safe-ground alternative.
+            if args.Target==nil and c.sdk.Cursor.MoveAtCursor and Game.GetUnderMouseObject then
+                local ok,hover=pcall(Game.GetUnderMouseObject)
+                if ok and not hover then return end
+            end
             local destination=args.Target or (c.sdk.Cursor.GetPlayerPosition and c.sdk.Cursor:GetPlayerPosition()) or c.aim or mousePos
             if destination then
                 local point=require('lho.ground').select(c,destination.pos or destination)
@@ -208,6 +215,18 @@ function App:tick()
     -- auto-leveling or ordinary combat can consume this tick's dispatcher.
     local previewInput=c.input:previewHeld() and (c.input:held('cursorKey') or c.input:held('allyKey'))
     if not c:blocked() then c.smite:auto() end
+    local evade=c.sdk.Evade
+    if evade and evade.RegisterController and self.evadeProvider~=evade then
+        local registered=evade:RegisterController('LHO',{active=function()return self.active end,committed=function()
+            return self.active and (c.combat.insec~=nil or c.wards.pending~=nil)
+        end,yield=function(evidence)
+            if not evidence.likelyDeath then return false end
+            self:cancel('evade_emergency',false)
+            return true
+        end})
+        if registered then self.evadeProvider=evade end
+    end
+    if evade and type(evade.Evading)=='function'and evade:Evading()then c.attackTarget=nil;c.moveTarget=nil;c.status='Evading';return end
     c.wards:fastTick(true)
     c.combat:fastKick()
     -- Release a prepared post-attack move before diagnostic snapshots and

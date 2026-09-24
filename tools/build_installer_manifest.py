@@ -10,6 +10,9 @@ PACKAGES = (
     ('lho', 'LeeHarveyOsward (Lee Sin)', 'LeeHarveyOsward.lua', ['orbama'], []),
     ('classic', 'ClassicAIO for Orbama (Classic mode)', 'ClassicAIO_Orbama.lua', ['orbama'],
      ['ClassicAIO.lua', 'ClassicAIOv2.lua']),
+    ('evade', 'Orbama Evade', 'OrbamaEvade.lua', ['orbama'], []),
+    ('katahari', 'Kata Hari (Katarina)', 'KataHari.lua', ['orbama'], ['Katarina.lua']),
+    ('cardmarx', 'Card Marx (Twisted Fate)', 'CardMarx.lua', ['orbama'], ['TwistedFate.lua']),
 )
 
 

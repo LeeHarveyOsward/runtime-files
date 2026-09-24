@@ -1,6 +1,6 @@
 -- Runtime identifiers: repository ClassicAIO + Riot Data Dragon 16.17.1.
 -- Classic combat coefficients are candidates, deliberately gated until measured.
-local P={version='16.17.1',build='2026-09-23-r82',neutralTeam=300}
+local P={version='16.17.1',build='2026-09-24-r84',neutralTeam=300}
 P.classicSmiteTargets={s3lizardelder=true,s3ancientgolem=true,lizardelder=true,ancientgolem=true,
     giantwolf=true,wraith=true,greatwraith=true,golem=true,wight=true,red=true,blue=true}
 P.normalSmiteTargets={srured=true,srublue=true,srumurkwolf=true,srurazorbeak=true,

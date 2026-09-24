@@ -163,19 +163,19 @@ end
 
 function ClassicKogMaw:CastGGPred(spell, target)
 	if spell == HK_Q then
-		local QPrediction = GGPrediction:SpellPrediction(self.QSpell)
+		local QPrediction = V2:Prediction(self.QSpell)
 		QPrediction:GetPrediction(target, myHero)
 		if QPrediction:CanHit(3) then
 			return Control.CastSpell(HK_Q, QPrediction.CastPosition)
 		end
 	elseif spell == HK_E then
-		local EPrediction = GGPrediction:SpellPrediction(self.ESpell)
+		local EPrediction = V2:Prediction(self.ESpell)
 		EPrediction:GetPrediction(target, myHero)
 		if EPrediction:CanHit(3) then
 			return Control.CastSpell(HK_E, EPrediction.CastPosition)
 		end
 	elseif spell == HK_R then
-		local RPrediction = GGPrediction:SpellPrediction(self.RSpell)
+		local RPrediction = V2:Prediction(self.RSpell)
 		RPrediction:GetPrediction(target, myHero)
 		if RPrediction:CanHit(3) then
 			return Control.CastSpell(HK_R, RPrediction.CastPosition)

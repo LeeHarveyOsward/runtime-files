@@ -588,6 +588,14 @@ end
 -- Survival - Seraph''s / Zhonya''s / Barrier for self, Locket / Heal for team
 -- ---------------------------------------------------------------------------------
 
+local function LocketNeeded()
+	local defense = ActivatorMenu.Defensive
+	return defense.Enabled:Value() and defense.Locket.Enabled:Value()
+		and ForEachAlly(600, function(ally)
+			return HealthPercent(ally) <= defense.Locket.HP:Value()
+		end)
+end
+
 local function Survival()
 	local defensiveOn = ActivatorMenu.Defensive.Enabled:Value()
 	local enemies = GetEnemyCount(ActivatorMenu.Defensive.Zhonyas.EnemyRange:Value(), myHero.pos)
@@ -609,14 +617,8 @@ local function Survival()
 	end
 
 	-- Locket of the Iron Solari
-	if defensiveOn and ActivatorMenu.Defensive.Locket.Enabled:Value()
-		and HasClassicItem(ITEM_LOCKET) and ItemReady(ITEM_LOCKET) then
-		local hpLimit = ActivatorMenu.Defensive.Locket.HP:Value()
-		ForEachAlly(700, function(ally)
-			if HealthPercent(ally) > hpLimit then return false end
-			if GetDistance(ally.pos) > 700 then return false end
-			return CastItem(ITEM_LOCKET)
-		end)
+	if HasClassicItem(ITEM_LOCKET) and ItemReady(ITEM_LOCKET) and LocketNeeded() then
+		CastItem(ITEM_LOCKET)
 	end
 end
 
@@ -931,7 +933,7 @@ ValidateItem=function(id,target)
     end
     if id==ITEM_SERAPH then return defense.Enabled:Value() and defense.Seraph.Enabled:Value() and HealthPercent(myHero)<=defense.Seraph.HP:Value()end
     if id==ITEM_ZHONYAS then return defense.Enabled:Value() and defense.Zhonyas.Enabled:Value() and HealthPercent(myHero)<=defense.Zhonyas.HP:Value() and GetEnemyCount(defense.Zhonyas.EnemyRange:Value(),myHero.pos)>0 end
-    if id==ITEM_LOCKET then return defense.Enabled:Value() and defense.Locket.Enabled:Value() and ForEachAlly(600,function(ally)return HealthPercent(ally)<=defense.Locket.HP:Value()end)end
+    if id==ITEM_LOCKET then return LocketNeeded()end
     if id==ITEM_RANDUIN then return defense.Enabled:Value() and defense.Randuin.Enabled:Value() and GetEnemyCount(defense.Randuin.Range:Value(),myHero.pos)>0 end
     local potion=({[ITEM_HP_POTION]='HealthPotion',[ITEM_MANA_POTION]='ManaPotion',[ITEM_FLASK]='Flask',[ITEM_BISCUIT]='Biscuit'})[id]
     if potion then

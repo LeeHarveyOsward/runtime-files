@@ -147,7 +147,7 @@ function ClassicBlitzcrank:KillSteal()
 end
 
 function ClassicBlitzcrank:CastQ(target, hc)
-	local p = GGPrediction:SpellPrediction(self.QSpell)
+	local p = V2:Prediction(self.QSpell)
 	p:GetPrediction(target, myHero)
 	if p:CanHit(hc or 2) then
 		return Control.CastSpell(HK_Q, p.CastPosition)

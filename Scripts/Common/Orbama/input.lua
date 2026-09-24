@@ -66,6 +66,7 @@ return function(cursor,env)
             preparedAt=action and action.preparedAt,warpStartedAt=action and action.warpStartedAt,
             gameplayValidatedAt=action and action.gameplayValidatedAt,commitValidatedAt=action and action.commitValidatedAt,
             prevalidateWorldCast=action and action.prevalidateWorldCast or nil,
+            pointerMove=action and action.pointerMove or nil,
             returnTarget=details and copy(action and action.returnTarget),returnBefore=details and copy(action and action.returnBefore),
             returnSample=details and copy(action and action.returnSample),returnAccepted=action and action.returnAccepted,
             sentAt=action and action.sentAt,releasedAt=action and action.releasedAt,
@@ -339,7 +340,7 @@ return function(cursor,env)
         end
         if self.Physical[key] or safe(env.isDown,key) then return false end
         if action and action.budgetEnd and not self:InputBudget(action) then return false end
-        if action and action.prevalidateWorldCast and not action.sentAt then
+        if action and action.prevalidatedWorld and not action.sentAt then
             local ticket=action.commitCertificate;action.commitCertificate=nil
             if self.Active~=action or not self:valid(action,true) then return false end
             if not ticket or ticket.pass~=self.ResolutionPass or not action.resolution
@@ -495,6 +496,11 @@ return function(cursor,env)
         if synthetic then return end
         if not self.Active and (self.PendingReturn or near(p,self.UntrustedScreen)) then return end
         if self.Active then
+            if self.Active.pointerMove then
+                -- No synthetic positioning belongs to this click. Physical
+                -- motion during the native down/up must never trigger a return.
+                self.PlayerScreen=copy(p);self.PlayerWorld=copy(env.world());return
+            end
             if not near(p,self.ActionScreen) and not near(p,self.PlayerScreen) then
                 local r=self.Active
                 -- A key already handed to the host still needs its complete
@@ -721,11 +727,11 @@ return function(cursor,env)
         local r=self.Active
         local validationStart=self.DiagnosticsEnabled~=false and env.clock()
         if not r then return false end
-        if r.prevalidateWorldCast then
+        if r.prevalidatedWorld then
             if not self:WorldCommitValid(r) then return false end
         elseif not self:valid(r) then return false end
         local checkedScreen=env.screen()
-        if r.prevalidateWorldCast and self.DiagnosticsEnabled~=false then r.screenAtSend=copy(checkedScreen) end
+        if r.prevalidatedWorld and self.DiagnosticsEnabled~=false then r.screenAtSend=copy(checkedScreen) end
         if not near(checkedScreen,self.correctedCastPos) then
             r.reason='cursor_changed_before_send'
             if validationStart then
@@ -742,6 +748,12 @@ return function(cursor,env)
             if not confirmed then r.reason=why;return false end
             if not self:valid(r) then return false end
         end
+        if r.prevalidateWorldMove or r.pointerMove then
+            local fn=Game.GetUnderMouseObject
+            if type(fn)~='function' then r.reason='ground_hover_unavailable';return false end
+            local ok,obj=pcall(fn)
+            if not ok or obj~=nil then r.reason=ok and 'ground_hover_obstructed' or 'ground_hover_error';return false end
+        end
         if not self:InputBudget(r) then return false end
         if not self:PrepareTargetFilter(r) then return false end
         local mouse=r.leftClicks or r.keys[1]==env.moveKey
@@ -752,6 +764,23 @@ return function(cursor,env)
             for _=1,r.leftClicks or 1 do
                 -- Once a host call may have sent input, cancellation cannot undo it.
                 if not self:InputBudget(r) then return false end
+                if r.pointerMove and (not self:valid(r,true) or not near(env.screen(),r.actionScreen)) then
+                    r.reason=r.reason or 'cursor_changed_before_send';return false
+                end
+                if r.prevalidateWorldMove then
+                    local ticket=r.commitCertificate;r.commitCertificate=nil
+                    if self.Active~=r or not self:valid(r,true) then return false end
+                    if r.commitGuard then
+                        local ok,allowed,why=pcall(r.commitGuard)
+                        if not ok or not allowed then r.reason=why or 'commit_guard_declined';return false end
+                    end
+                    if self.Active~=r or not self:valid(r,true)then return false end
+                    if not ticket or ticket.pass~=self.ResolutionPass or not r.resolution
+                        or ticket.revision~=r.resolution.revision or env.clock()-ticket.at>20 then
+                        r.reason='world_commit_expired';return false
+                    end
+                    if not near(env.screen(),r.actionScreen) then r.reason='cursor_changed_before_send';return false end
+                end
                 r.sentAt=r.sentAt or env.clock();r.state='sent'
                 r.mouseButton=vk;self.Buttons[vk]={owner=r.owner,action=r,retries=0}
                 local ok=self:CallMouse(down,vk,true,r)
@@ -779,7 +808,7 @@ return function(cursor,env)
     end
     function cursor:dispatch(r,predecessor)
         if r.resolveWorldTarget and not self:ResolveWorld(r) then r.state="aborted";r.abortedAt=env.clock();return false end
-        if not self:valid(r,r.prevalidateWorldCast) then r.state='aborted';r.reason=r.reason or 'validation or expiry';r.abortedAt=env.clock();self:record('aborted',r,r.reason);return false end
+        if not self:valid(r,r.prevalidatedWorld) then r.state='aborted';r.reason=r.reason or 'validation or expiry';r.abortedAt=env.clock();self:record('aborted',r,r.reason);return false end
         -- Target-filter rejection must happen before any projection or warp.
         -- Rechecking at send time also covers a state change during placement.
         if not self:PrepareTargetFilter(r) then
@@ -797,7 +826,7 @@ return function(cursor,env)
             return result
         end
         if not r.rootAt then self:SamplePlayer() end
-        if not self:valid(r,r.prevalidateWorldCast) then return false end
+        if not self:valid(r,r.prevalidatedWorld) then return false end
         local proxy=setmetatable({CastPos=r.target,IsTarget=r.target and r.target.pos~=nil},{__index=self})
         r.ggCompatible=self.GGCompatible
         r.hold=r.ggCompatible and env.fallback() or self.Timing:hold(r.class,r.critical)
@@ -823,7 +852,7 @@ return function(cursor,env)
             r.playerScreen=copy(r.returnTarget or self.PlayerScreen);r.playerWorld=copy(self.PlayerWorld)
         end
         if not self:valid(r) or self:InputsBlocked(r) then r.state='aborted';r.abortedAt=env.clock();return false end
-        if r.prevalidateWorldCast then
+        if r.prevalidatedWorld then
             self:PrepareWorldCommit(r)
             -- The final validator can take time; project the validated world
             -- intent again before the warp, never run it after positioning.
@@ -864,17 +893,10 @@ return function(cursor,env)
             if r.aimCandidates then return self:FailAim(r,'aim_position_mismatch') end
             self:release('position unconfirmed');return false
         end
-        if r.ggCompatible and not r.resolveWorldTarget then
-            -- v27 checked placement before GG's own positioning call. Keep both
-            -- calls inside this owner so the original player position survives.
-            -- Resolved world casts already use a freshly projected, confirmed
-            -- position above. Repeating the native warp adds no evidence.
-            if not self:SetPosition(self.ActionScreen,'action') or not near(env.screen(),self.ActionScreen) then
-                if r.onAimFailure then return self:FailAim(r,'aim_position_mismatch') end
-                self:release('GG-compatible positioning declined');return false
-            end
-        end
-        if env.deferMoves and not r.ggCompatible and r.class=='move' then
+        -- Placement has just been confirmed above. A duplicate native warp to
+        -- the same pixel adds no evidence. Final validation and the full
+        -- configured post-send hold still apply in both timing modes.
+        if env.deferMoves and not r.ggCompatible and r.class=='move' and not r.prevalidateWorldMove then
             r.deferredMove=true;r.awaitingPosition=true;r.sendAfter=env.clock()+env.fallback()
             self.Timer=r.budgetEnd-r.hold
             self:record('position_requested',r);return true
@@ -901,7 +923,7 @@ return function(cursor,env)
         -- the final gameplay and cursor checks immediately before sending.
         if r.resolveWorldTarget and not placementFresh and not self:RefreshWorldPlacement(r) then return self.Active==r end
         r.awaitingPosition=nil;r.positionedAt=env.clock()
-        if self.DiagnosticsEnabled~=false and not r.prevalidateWorldCast then r.screenAtSend=copy(env.screen());r.worldAtSend=copy(env.world()) end
+        if self.DiagnosticsEnabled~=false and not r.prevalidatedWorld then r.screenAtSend=copy(env.screen());r.worldAtSend=copy(env.world()) end
         local pressed,result=pcall(self.StepPressKey,self)
         if self.Active~=r then return false end
         if r.sentAt then
@@ -1010,6 +1032,28 @@ return function(cursor,env)
         r.keys={key};r.target=target;r.targetID=target and (target.networkID or target.handle)
         return self:dispatch(r)
     end
+    function cursor:MoveAtCursor()
+        -- Only the no-argument Control.Move path uses this. Explicit world
+        -- targets, attacks and plugin movement retain positioned dispatch.
+        if self.Resolving or self.Step>0 or self.Active or self.PendingReturn
+            or self.Uncertain or env.clock()<self.NotBefore or not self:Available() then return false end
+        self:SamplePlayer()
+        if self.Step>0 or self.Active or self.PendingReturn or self.Uncertain then return false end
+        local p=copy(env.screen());local world=copy(env.world())
+        if not p or not world or not near(p,self.PlayerScreen) then return false end
+        local bounds=env.resolution and env.resolution()
+        if not finite(p.x) or not finite(p.y) or bounds and (p.x<0 or p.y<0 or p.x>=bounds.x or p.y>=bounds.y) then return false end
+        local r=self:newAction({owner='orbwalker',keys={env.moveKey},target=world,critical=false,class='move'})
+        r.pointerMove=true;r.publicType='move';r.hold=0;r.ggCompatible=false
+        r.rootAt=env.clock();r.budgetEnd=r.expires;r.acquiredAt=r.rootAt
+        r.playerScreen=copy(p);r.playerWorld=copy(world);r.actionScreen=copy(p)
+        r.beforePath=copy(env.hero.pathing and env.hero.pathing.endPos);r.origin=copy(env.hero.pos)
+        self.Active=r;self.Step=1;self.ActionScreen=copy(p);self.correctedCastPos=copy(p)
+        local ok=self:SendPositioned(r,true)
+        if self.Active==r then self:release(ok and 'current_cursor_click_complete' or r.reason or 'current_cursor_click_uncertain') end
+        self.LastActionID=r.id
+        return ok
+    end
     function cursor:release(reason)
         local r=self.Active;if not r then return end
         if r.followup then
@@ -1020,6 +1064,13 @@ return function(cursor,env)
         self:CleanupButtons(false,r.owner)
         r.reason=reason
         if not r.sentAt then r.state='aborted';r.abortedAt=env.clock() end
+        if r.pointerMove then
+            -- There was no warp, therefore no return or positioning hold exists.
+            -- Failed mouse-up stays owned in Buttons for bounded cleanup.
+            r.releasedAt=env.clock();self.Step=0;self.ForceTCOUp=false
+            self.NotBefore=env.clock();self.Timer=self.NotBefore
+            self:record('released',r,reason);return
+        end
         for key,owner in pairs(self.KeysOwned) do if owner==r.owner then self:ReleaseKey(key,owner) end end
         r.returnRequestedAt=env.clock()
         r.returnTarget=copy(r.returnTarget or self.PlayerScreen);r.returnBefore=copy(env.screen());r.returnGeneration=self.Generation

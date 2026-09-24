@@ -2,7 +2,7 @@
 return function(g,sdk,active,options)
     assert(not sdk.OrbamaVersion,'Original GG required')
     local A={falseIsRejection=options.ggFalseIsRejection~=false,name='OriginalGG',queue={},records={},serial=0,history={},caps={
-        surviveMovementCommands=false,resolveWorldTarget=false,automationClaims=false,
+        surviveMovementCommands=false,resolveWorldTarget=false,automationClaims=false,prevalidateWorldCast=false,prevalidateWorldMove=false,
         cancelSubmitted=false,observedExecution=false,privateQueue=true,updatePriority=true}}
     sdk.ActionClientGG=sdk.ActionClientGG or {};local providers=sdk.ActionClientGG;providers[#providers+1]=A
     local rank={critical=4,interactive=3,normal=2,background=1}
@@ -15,7 +15,7 @@ return function(g,sdk,active,options)
     function A:Capabilities() return self.caps end
     function A:Available() return not sdk.Cursor or sdk.Cursor.Step==0 end
     function A:Submit(q)
-        for _,name in ipairs({'verifyTarget','aimCandidates','aimFallback','retryKey','world','count','approach','handoff','survivePointerMotion'})do
+        for _,name in ipairs({'verifyTarget','aimCandidates','aimFallback','retryKey','world','count','approach','handoff','survivePointerMotion','prevalidateWorldCast','prevalidateWorldMove','commitGuard'})do
             if q[name]~=nil and q[name]~=false then return nil,'GG_unsupported_option:'..name end
         end
         if q.type~='cast' and q.type~='attack' and q.type~='move' then return nil,'GG_unsupported_type' end

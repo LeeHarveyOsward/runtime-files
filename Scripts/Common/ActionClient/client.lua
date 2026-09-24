@@ -52,10 +52,44 @@ return function(g,transports,options)
     function C:Now()return transport:Now()end
     function C:Capabilities()
         local c=copy(transport:Capabilities());c.contexts=true;c.resources=true;c.replaceUnsent=true
-        c.observationTracking=true;c.boundedHistory=true;c.scopedConditions=true;c.sharedClientVersion=1
+        c.observationTracking=true;c.boundedHistory=true;c.scopedConditions=true;c.sharedClientVersion=1;c.emergencyResourceRelease=true
         return c
     end
     function C:Available()return transport:Available()end
+    function C:RegisterEmergencyYield(callback)
+        if self.closed or self.resolving or type(callback)~='function'then return false end
+        self.emergencyYield=callback;return true
+    end
+    function C:CooperateWithEvade(policy)
+        if self.closed or self.resolving or type(policy)~='table'or type(policy.committed)~='function'
+            or type(policy.yield)~='function'then return false end
+        self.evadePolicy=policy;return true
+    end
+    function C:YieldUnsent(resource)
+        if self.closed or self.resolving then return false end
+        for id,q in pairs(self.jobs)do if not resource or q.resource==resource then
+            local r=self:Poll(id)
+            if r and not r.sentAt then self:Cancel(id,'evade_emergency');self:Finish(id)end
+        end end
+        if resource then return hub.resources[resource]==nil end
+        return true
+    end
+    function C:RequestEmergencyRelease(resource,evidence)
+        if self.closed or self.resolving or type(evidence)~='table' or evidence.likelyDeath~=true
+            or type(evidence.expires)~='number' or evidence.expires<self:Now()
+            or evidence.expires>self:Now()+250 then return false,'emergency_evidence_required'end
+        local lease=hub.resources[resource]
+        if not lease then return true end
+        local owner=lease.client
+        if owner==self then return false,'already_owned'end
+        local record=owner:Poll(lease.id)
+        if not record or record.sentAt or record.cleanupPending then return false,'resource_in_flight'end
+        if not owner.emergencyYield then return false,'owner_declined'end
+        local ok,accepted=pcall(owner.emergencyYield,resource,copy(evidence),lease.id)
+        if not ok or accepted~=true then return false,'owner_declined'end
+        -- Only the owner can cancel and release. A callback's true is not release.
+        return hub.resources[resource]==nil,hub.resources[resource]and 'owner_release_pending' or nil
+    end
     function C:IsSending()return transport.sending==true end
     function C:Condition(owner,name,condition,exceptions)
         if self.resolving then return false,'resolver_side_effect'end
@@ -68,6 +102,7 @@ return function(g,transports,options)
 if self.gates[token]then self.gates[token]=nil;return true end;return false end
     function C:ContextValid(q,phase)
         if self.closed or not active() or g.myHero.dead or g.Game.IsChatOpen() or not g.Game.IsOnTop() then return false,'context_unavailable' end
+        if self.evadePolicy and sdk.Evade and type(sdk.Evade.Evading)=='function' and sdk.Evade:Evading()and not q.evadeCompatible then return false,'evade_intervention'end
         local c=q.context
         if c then
             if c.modes then local yes=false;for _,mode in ipairs(c.modes)do if sdk.Orbwalker.Modes[mode]then yes=true end end;if not yes then return false,'mode_ended' end end

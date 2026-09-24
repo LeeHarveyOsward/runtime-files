@@ -1,7 +1,7 @@
 return function(g, modules, champion)
     local sdk=g.SDK;local registry=g.ClassicAIOv2
     if registry and registry.Shutdown then registry:Shutdown('superseded') end
-    local C={version='2.1.8-dev',generation=(registry and registry.generation or 0)+1,enabled=true,
+    local C={version='2.1.11-dev',generation=(registry and registry.generation or 0)+1,enabled=true,
         pending={},resources={},history={},quarantine={},observedSpells={},spellStates={},locks={},menus={},diagnostics={},metrics={requested=0,sent=0,observed=0,rejected=0},claims={}}
     g.ClassicAIOv2=C
     function C:Trace(kind,row,throttle)
@@ -35,6 +35,15 @@ return function(g, modules, champion)
         C.adapter=sdk.Actions:CreateClient(clientOptions)
     else C.adapter=modules.actionClient(g,clientOptions)end
     local A=C.adapter
+    if A.CooperateWithEvade then
+        A:CooperateWithEvade({committed=function()return C.locks.move==true or C.locks.attack==true end,
+            yield=function(evidence)
+                if not evidence.likelyDeath then return false end
+                A:YieldUnsent();C.locks={};A:SetBlocked('champion','attack',false);A:SetBlocked('champion','move',false)
+                return true
+            end})
+        A:RegisterEmergencyYield(function(resource)return A:YieldUnsent(resource)end)
+    end
     local keyedMechanical=A:Capabilities().keyedMechanicalObservation==true
     function C:Available()
         return self:Active() and not g.myHero.dead and not g.Game.IsChatOpen() and g.Game.IsOnTop()
@@ -44,6 +53,20 @@ return function(g, modules, champion)
     env.SDK=setmetatable({},{__index=sdk});env.V2=C
     local prediction=modules.prediction(assert(g.GGPrediction,'Prediction provider must be loaded'),g.myHero,g.Vector)
     env.GGPrediction=prediction.facade;C.prediction=prediction
+    function C:Prediction(settings)return prediction:ForSettings(settings)end
+    function C:DecisionUnits(method)
+        local scope=not self.validating and self.evaluation
+        if scope and scope[method] then return scope[method] end
+        local manager=sdk.ObjectManager
+        local units=manager[method](manager)
+        if scope then
+            -- Keep a private identity list; positions, health and validity are
+            -- read by each consumer. Never lend an SDK scratch array to a cache.
+            local copy={};for i=1,#units do copy[i]=units[i] end
+            scope[method]=copy;return copy
+        end
+        return units
+    end
     local slots={}
     for _,name in ipairs({'Q','W','E','R','SUMMONER_1','SUMMONER_2'})do slots[g['HK_'..name]]=g['_'..name] or g[name] end
     for i=1,7 do if g['HK_ITEM_'..i] then slots[g['HK_ITEM_'..i]]=g['ITEM_'..i] end end
@@ -54,6 +77,8 @@ return function(g, modules, champion)
     end
     function C:Invoke(fn,selfObject,args,name)
         if not self:Active() then return end
+        local root=self.evaluation==nil
+        if root then self.evaluation={} end
         local old=self.decision;local previousContext=self.executionContext
         local declaration=self.policy and self.policy.methods[name]
         if not previousContext and declaration then self.executionContext=declaration(selfObject) end
@@ -62,6 +87,7 @@ return function(g, modules, champion)
         end
         local began=self.logger and g.GetTickCount()
         local results={pcall(fn,selfObject,unpack(args))};self.decision=old;self.executionContext=previousContext
+        if root then self.evaluation=nil end
         if began then
             local elapsed=math.max(0,g.GetTickCount()-began);local l=self.logger
             l.callbackCalls=l.callbackCalls+1;l.callbackTotal=l.callbackTotal+elapsed;l.callbackMax=math.max(l.callbackMax,elapsed)
@@ -169,6 +195,8 @@ return function(g, modules, champion)
         if policy.channel then A:Condition('champion','channel',function(q)return self:Fresh(policy.channel,self.champion,q)end,policy.exceptions)end
     end
     function C:Cast(key,target,options)
+        -- An input handoff ends decision-local reuse, even if sending declines.
+        if self.evaluation then self.evaluation={} end
         options=options or {};local binding=target and prediction.bindings[target]
         local targetObject=options.intentTarget or target and target.pos and target or binding and binding.target
         local targetID=targetObject and (targetObject.networkID or targetObject.handle)
@@ -253,6 +281,9 @@ return function(g, modules, champion)
         local prior=self.resources[resource]
         if prior and prior.id~=id then
             prior.cancelled=true;prior.callbacks={};self.pending[prior.key]=nil
+            local previous=A:Poll(prior.id)
+            prior.outcome=(prior.sentAt or previous and previous.sentAt) and 'unobserved_handoff' or 'replaced_before_send'
+            self:FinishIntent(prior,previous)
         end
         q.id=id;self.pending[key]=q;self.resources[resource]=q;self.lastIntent=q
         return true,id
@@ -338,16 +369,20 @@ return function(g, modules, champion)
                     end
                 end
             end
-            if not self.pending[key] then
-                if self.logger then self:Trace('cast_finished',{id=q.id,key=key,owner=q.owner,target=q.targetID,
-                    state=r and r.state,reason=r and r.reason,validation=q.lastValidationReason,observationReason=q.observationReason,
-                    outcome=q.outcome or (q.observedAt and 'mechanically_observed' or not q.sentAt and 'rejected_before_send' or 'unobserved'),
-                    sentAt=q.sentAt,observedAt=q.observedAt,ambiguous=q.ambiguous==true})end
-                A:Finish(q.id)
-                if self.resources[q.resource]==q then self.resources[q.resource]=nil end
-                self.history[#self.history+1]={id=q.id,owner=q.owner,key=q.key,resource=q.resource,outcome=q.outcome,sentAt=q.sentAt,observedAt=q.observedAt};if #self.history>128 then table.remove(self.history,1)end
-            end
+            if not self.pending[key] then self:FinishIntent(q,r) end
         end
+    end
+    function C:FinishIntent(q,r)
+        local key=q.key
+        if not q.sentAt and r and r.sentAt then q.sentAt=r.sentAt;self.metrics.sent=self.metrics.sent+1 end
+        q.outcome=q.outcome or (q.observedAt and 'mechanically_observed' or not q.sentAt and 'rejected_before_send' or 'unobserved')
+        if self.logger then self:Trace('cast_finished',{id=q.id,key=key,owner=q.owner,target=q.targetID,
+            state=r and r.state,reason=r and r.reason,validation=q.lastValidationReason,observationReason=q.observationReason,
+            outcome=q.outcome,sentAt=q.sentAt,observedAt=q.observedAt,ambiguous=q.ambiguous==true})end
+        A:Finish(q.id)
+        if self.resources[q.resource]==q then self.resources[q.resource]=nil end
+        self.history[#self.history+1]={id=q.id,owner=q.owner,key=q.key,resource=q.resource,outcome=q.outcome,sentAt=q.sentAt,observedAt=q.observedAt}
+        if #self.history>128 then table.remove(self.history,1)end
     end
     function C:Automation(name,on)
         if A.name=='Orbama' then

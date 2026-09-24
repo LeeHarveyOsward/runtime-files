@@ -11,13 +11,49 @@ sys.path.insert(0,str(ROOT/'tools'))
 from build_orbama_lua import render as orbama
 from build_lho import render_bundle as lho
 from build_classic_v2 import render as classic, CHAMPIONS
+from build_katarina import render as katarina
+from build_twisted_fate import render as twisted_fate
+from build_evade import render as evade
 
-VERSION=5
+VERSION=6
 ORIGIN='https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files'
 OUT=ROOT/'dist/public-runtime'
 
 def public_filename(component):
     return 'ClassicAIO_Orbama.lua' if component=='ClassicAIOv2' else component+'.lua'
+
+CHANNELS={'ClassicAIOv2':'classic','OrbamaEvade':'evade','KataHari':'katahari','CardMarx':'cardmarx'}
+
+def controller_module(name,body):
+    if name=='kata.app':
+        body=between(body,"    self.logger=require('kata.log')",'    return self','')
+        body=between(body,'function App:record(', 'function App:decide()',
+            'function App:record()end\nfunction App:flushLog()end\nfunction App:log()end\nfunction App:tick()if self.active then self:decide()end end\n')
+        body=body.replace("    if self.telemetry then self.telemetry:safe('draw')end\n",'')
+        body=body.replace("    if self.sdk.OnMaintenance then attach(self.sdk.OnMaintenance,function()self:flushLog()end)end\n",'')
+        body=body.replace('metrics={ticks=0,totalMs=0,maxMs=0},','')
+    if name=='kata.config':
+        body=body.replace("{'diagnostics','Diagnostic log'},",'').replace(",{'diagnostics','Diagnostic log'}",'')
+        body=body.replace("function C:get(k)","function C:get(k)if k=='diagnostics'then return false end;")
+    if name=='tf.app':
+        body=body.replace(',records={},recordIndex=0','')
+        body=between(body,"    c.log=require('tf.log')",'    c.state:refresh()', '')
+        body=between(body,'function App:record(', 'function App:blocked()', 'function App:record()end\n')
+        body=between(body,"    if self.config:get('diagnostics') and Game.Timer()", "    self.actions.client:SetBlocked('gate','attack',s.channeling)", '')
+        body=between(body,'function App:performance()', '    self.tickFn=function()', 'function App:install()\n')
+        body=between(body,'        if ok then\n', '        if not ok then', '')
+        body=body.replace('self.telemetry:draw();','')
+        body=between(body,"    self.log:write('loaded'",'end\nfunction App:Shutdown()', '')
+        body=body.replace('    if self.log then self.log:flush(true)end\n','')
+    if name=='tf.config':
+        body=body.replace("    add('diagnostics','Record bounded diagnostics',false)\n",'')
+        body=body.replace('function c:get(id)',"function c:get(id)if id=='diagnostics'then return false end;")
+    return body
+
+def evade_module(name,body):
+    if name=='diagnostics':
+        return 'local function skip()end\nreturn {new=function()return {Sample=skip,Event=skip,Snapshot=function()return {}end}end}'
+    return body
 
 def between(body,start,end,replacement):
     assert body.count(start)==1,start
@@ -74,7 +110,7 @@ def orbama_module(name,body):
 
 def classic_module(name,body):
     if name=='core':
-        body=body.replace("version='2.1.8-dev'","version='2.1.8'")
+        body=body.replace("version='2.1.11-dev'","version='2.1.11'")
         body=between(body,'    function C:Trace(', '    local function point', '    function C:Trace()end\n')
         body=body.replace('        if self.logger then pcall(self.logger.Close,self.logger,reason)end\n','')
         body=body.replace('        local began=self.logger and g.GetTickCount()\n','')
@@ -83,7 +119,7 @@ def classic_module(name,body):
         body=between(body,'            if self.logger then\n',"            if not r or r.state",'')
         body=between(body,'                    -- A mechanical change can be real', '                    local receipt=', '')
         body=between(body,"                            if self.logger then self:Trace('cast_observed'",'                            for _,fn', '')
-        body=between(body,"                if self.logger then self:Trace('cast_finished'",'                A:Finish', '')
+        body=between(body,"        if self.logger then self:Trace('cast_finished'",'        A:Finish', '')
         body=between(body,'    local logOK,logger=',"    g.Callback.Add('Tick'",'')
         body=between(body,'            if C.logger and not C.logger.failed then\n','        end\n    end)', '')
         assert 'logger' not in body
@@ -102,7 +138,11 @@ def payloads():
     controller="if not myHero or (myHero.charName~='LeeSin' and myHero.charName~='Jade_LeeSin') then return end\nif not _G.GGPrediction then\n(function()\n"+prediction+"\nend)()\nend\n"+controller
     classic_body=classic(classic_module,omit=('diagnostics',))
     classic_body="if SDK and SDK.OrbamaVersion and not _G.GGPrediction then\n(function()\n"+prediction+"\nend)()\nend\n"+classic_body
-    return {'Orbama':provider,'LeeHarveyOsward':controller,'ClassicAIOv2':classic_body}
+    kata=katarina(controller_module,omit=('kata.log','kata.telemetry'))
+    tf=twisted_fate(controller_module,omit=('tf.log','tf.telemetry'))
+    tf="if myHero and (myHero.charName=='TwistedFate' or myHero.charName=='Jade_TwistedFate') and SDK and SDK.OrbamaVersion and not _G.GGPrediction then\n(function()\n"+prediction+"\nend)()\nend\n"+tf
+    return {'Orbama':provider,'LeeHarveyOsward':controller,'ClassicAIOv2':classic_body,
+        'OrbamaEvade':evade(transform=evade_module),'KataHari':kata,'CardMarx':tf}
 
 def bootstrap(name,payload):
     sha=(ROOT/'Scripts/Common/Release/sha256.lua').read_text(encoding='utf-8')
@@ -110,7 +150,14 @@ def bootstrap(name,payload):
     is_classic=name=='ClassicAIOv2'
     singleton='ClassicAIOv2ReleaseClient' if is_classic else 'OrbamaReleaseClient'
     options=",{names={'ClassicAIOv2'},channel='classic',cachePrefix='runtime-classic-'}" if is_classic else ''
+    if name in CHANNELS and not is_classic:
+        channel=CHANNELS[name]
+        singleton=name+'ReleaseClient'
+        options=",{names={'"+name+"'},channel='"+channel+"',cachePrefix='runtime-"+channel+"-'}"
     guard=''
+    if name in ('KataHari','CardMarx'):
+        hero='Katarina' if name=='KataHari' else 'TwistedFate'
+        guard="if not myHero or (myHero.charName~='"+hero+"' and myHero.charName~='Jade_"+hero+"') then return end\n"
     if is_classic:
         supported='{'+','.join('['+json.dumps(c)+']=true' for c in CHAMPIONS)+'}'
         guard="local supported="+supported+"\nif not myHero or not supported[myHero.charName:match('^Jade_(.+)$') or ''] then return end\nif not SDK then print('[ClassicAIOv2] SDK required');return end\n"
@@ -121,11 +168,11 @@ def bootstrap(name,payload):
         payload+"\nend,"+str(VERSION)+")\n")
 
 def build():
-    bodies=payloads();manifests={name:'R1\n'+str(VERSION)+'\n' for name in ('release','classic')}
+    bodies=payloads();manifests={name:'R1\n'+str(VERSION)+'\n' for name in ('release',*CHANNELS.values())}
     files={}
     for name,body in bodies.items():
         data=body.encode('utf-8')
-        channel='classic' if name=='ClassicAIOv2' else 'release'
+        channel=CHANNELS.get(name,'release')
         manifests[channel]+=f'{name} {hashlib.sha256(data).hexdigest()} {len(data)} {zlib.adler32(data)}\n'
         files[f'{channel}/{VERSION}/{name}.lua']=data
         files[public_filename(name)]=bootstrap(name,body).encode('utf-8')
@@ -134,11 +181,11 @@ def build():
         for path in (ROOT/channel).glob('*/*.lua'):
             if path.parent.name.isdigit() and int(path.parent.name)<VERSION:
                 files[path.relative_to(ROOT).as_posix()]=path.read_bytes()
-    for directory in ('Orbama','LeeHarveyOsward','ClassicAIOv2','ActionClient','ChampionMobility','CombatProfiles','OrbamaPrediction','Release'):
+    for directory in ('Orbama','LeeHarveyOsward','ClassicAIOv2','ActionClient','ChampionMobility','CombatProfiles','OrbamaPrediction','Release','Katarina','TwistedFate','OrbamaEvade'):
         for path in (ROOT/'Scripts/Common'/directory).rglob('*'):
             if not path.is_file() or path.suffix not in ('.lua','.json'):continue
             files[path.relative_to(ROOT).as_posix()]=path.read_bytes()
-    for name in ('build_public_release.py','build_orbama_lua.py','build_lho.py','build_classic_v2.py','build_gg_test.py','build_action_client.py','orbama_patches.py'):
+    for name in ('build_public_release.py','build_orbama_lua.py','build_lho.py','build_classic_v2.py','build_gg_test.py','build_action_client.py','orbama_patches.py','build_katarina.py','build_twisted_fate.py','build_evade.py'):
         files['tools/'+name]=(ROOT/'tools'/name).read_bytes()
     files['reference/GGOrbwalker-3.075.lua']=(ROOT/'reference/GGOrbwalker-3.075.lua').read_bytes()
     from build_installer_manifest import installer_files

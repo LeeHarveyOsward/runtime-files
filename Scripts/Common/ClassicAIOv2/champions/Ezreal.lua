@@ -325,7 +325,7 @@ function ClassicEzreal:AutoR()
 		end
 	end		
 	if Menu.Auto.RAOE:Value() then
-		local RPrediction = GGPrediction:SpellPrediction(self.RSpell)
+		local RPrediction = V2:Prediction(self.RSpell)
 		local aoeResults = RPrediction:GetAOEPrediction(myHero)
 		local bestResult = nil
 		for i = 1, #aoeResults do
@@ -392,7 +392,7 @@ function ClassicEzreal:GetRDmg(unit)
 end
 
 function ClassicEzreal:CastQ(unit)
-	local QPrediction = GGPrediction:SpellPrediction(self.QSpell)
+	local QPrediction = V2:Prediction(self.QSpell)
 	QPrediction:GetPrediction(unit, myHero)
 	if QPrediction:CanHit(3) then
 		if Control.CastSpell(HK_Q, QPrediction.CastPosition) then
@@ -404,7 +404,7 @@ function ClassicEzreal:CastQ(unit)
 end
 
 function ClassicEzreal:CastW(unit)
-	local WPrediction = GGPrediction:SpellPrediction(self.WSpell)
+	local WPrediction = V2:Prediction(self.WSpell)
 	WPrediction:GetPrediction(unit, myHero)
 	if WPrediction:CanHit(3) then
 		Control.CastSpell(HK_W, WPrediction.CastPosition)
@@ -412,7 +412,7 @@ function ClassicEzreal:CastW(unit)
 end
 
 function ClassicEzreal:CastR(unit)
-	local RPrediction = GGPrediction:SpellPrediction(self.RSpell)
+	local RPrediction = V2:Prediction(self.RSpell)
 	RPrediction:GetPrediction(unit, myHero)
 	if RPrediction:CanHit(3) then
 		Control.CastSpell(HK_R, RPrediction.CastPosition)

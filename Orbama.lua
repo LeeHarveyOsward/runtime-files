@@ -1,4 +1,4 @@
--- Release 5
+-- Release 6
 local client=_G.OrbamaReleaseClient
 if not client then
 local hash=(function()
@@ -225,7 +225,7 @@ return function(env,hash,builtin,origin,package)
 end
 
 end)()
-client=create(_G,hash,5,"https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files")
+client=create(_G,hash,6,"https://raw.githubusercontent.com/LeeHarveyOsward/runtime-files")
 _G.OrbamaReleaseClient=client
 end
 return client:Boot("Orbama",function()
@@ -5737,14 +5737,10 @@ do
 		if pos then
 			if not Cursor:Add(MOUSEEVENTF_RIGHTDOWN, pos) then return false end
 		elseif not a then
-			local unit = Game.GetUnderMouseObject()
-			if unit and unit.isEnemy and unit.isTargetable then
-				return false
-			end
 			if myHero.pathing.hasMovePath and GetDistance(Cursor:GetPlayerPosition(), myHero.pathing.endPos) < Menu.Main.Humanizer:Value() then
 				return false
 			end
-			if not Cursor:Add(MOUSEEVENTF_RIGHTDOWN, Cursor:GetPlayerPosition()) then return false end
+			if not Cursor:MoveAtCursor() then return false end
 		end
 		Movement.MoveTimer = GetTickCount() + Movement:GetHumanizer()
 		-- Orbwalker.CanHoldPosition = true
@@ -6236,7 +6232,7 @@ return function(cursor,env)
         end
         if self.Physical[key] or safe(env.isDown,key) then return false end
         if action and action.budgetEnd and not self:InputBudget(action) then return false end
-        if action and action.prevalidateWorldCast and not action.sentAt then
+        if action and action.prevalidatedWorld and not action.sentAt then
             local ticket=action.commitCertificate;action.commitCertificate=nil
             if self.Active~=action or not self:valid(action,true) then return false end
             if not ticket or ticket.pass~=self.ResolutionPass or not action.resolution
@@ -6392,6 +6388,11 @@ return function(cursor,env)
         if synthetic then return end
         if not self.Active and (self.PendingReturn or near(p,self.UntrustedScreen)) then return end
         if self.Active then
+            if self.Active.pointerMove then
+                -- No synthetic positioning belongs to this click. Physical
+                -- motion during the native down/up must never trigger a return.
+                self.PlayerScreen=copy(p);self.PlayerWorld=copy(env.world());return
+            end
             if not near(p,self.ActionScreen) and not near(p,self.PlayerScreen) then
                 local r=self.Active
                 -- A key already handed to the host still needs its complete
@@ -6618,11 +6619,11 @@ return function(cursor,env)
         local r=self.Active
         local validationStart=self.DiagnosticsEnabled~=false and env.clock()
         if not r then return false end
-        if r.prevalidateWorldCast then
+        if r.prevalidatedWorld then
             if not self:WorldCommitValid(r) then return false end
         elseif not self:valid(r) then return false end
         local checkedScreen=env.screen()
-        if r.prevalidateWorldCast and self.DiagnosticsEnabled~=false then r.screenAtSend=copy(checkedScreen) end
+        if r.prevalidatedWorld and self.DiagnosticsEnabled~=false then r.screenAtSend=copy(checkedScreen) end
         if not near(checkedScreen,self.correctedCastPos) then
             r.reason='cursor_changed_before_send'
             if validationStart then
@@ -6639,6 +6640,12 @@ return function(cursor,env)
             if not confirmed then r.reason=why;return false end
             if not self:valid(r) then return false end
         end
+        if r.prevalidateWorldMove or r.pointerMove then
+            local fn=Game.GetUnderMouseObject
+            if type(fn)~='function' then r.reason='ground_hover_unavailable';return false end
+            local ok,obj=pcall(fn)
+            if not ok or obj~=nil then r.reason=ok and 'ground_hover_obstructed' or 'ground_hover_error';return false end
+        end
         if not self:InputBudget(r) then return false end
         if not self:PrepareTargetFilter(r) then return false end
         local mouse=r.leftClicks or r.keys[1]==env.moveKey
@@ -6649,6 +6656,23 @@ return function(cursor,env)
             for _=1,r.leftClicks or 1 do
                 -- Once a host call may have sent input, cancellation cannot undo it.
                 if not self:InputBudget(r) then return false end
+                if r.pointerMove and (not self:valid(r,true) or not near(env.screen(),r.actionScreen)) then
+                    r.reason=r.reason or 'cursor_changed_before_send';return false
+                end
+                if r.prevalidateWorldMove then
+                    local ticket=r.commitCertificate;r.commitCertificate=nil
+                    if self.Active~=r or not self:valid(r,true) then return false end
+                    if r.commitGuard then
+                        local ok,allowed,why=pcall(r.commitGuard)
+                        if not ok or not allowed then r.reason=why or 'commit_guard_declined';return false end
+                    end
+                    if self.Active~=r or not self:valid(r,true)then return false end
+                    if not ticket or ticket.pass~=self.ResolutionPass or not r.resolution
+                        or ticket.revision~=r.resolution.revision or env.clock()-ticket.at>20 then
+                        r.reason='world_commit_expired';return false
+                    end
+                    if not near(env.screen(),r.actionScreen) then r.reason='cursor_changed_before_send';return false end
+                end
                 r.sentAt=r.sentAt or env.clock();r.state='sent'
                 r.mouseButton=vk;self.Buttons[vk]={owner=r.owner,action=r,retries=0}
                 local ok=self:CallMouse(down,vk,true,r)
@@ -6676,7 +6700,7 @@ return function(cursor,env)
     end
     function cursor:dispatch(r,predecessor)
         if r.resolveWorldTarget and not self:ResolveWorld(r) then r.state="aborted";r.abortedAt=env.clock();return false end
-        if not self:valid(r,r.prevalidateWorldCast) then r.state='aborted';r.reason=r.reason or 'validation or expiry';r.abortedAt=env.clock();self:record('aborted',r,r.reason);return false end
+        if not self:valid(r,r.prevalidatedWorld) then r.state='aborted';r.reason=r.reason or 'validation or expiry';r.abortedAt=env.clock();self:record('aborted',r,r.reason);return false end
         -- Target-filter rejection must happen before any projection or warp.
         -- Rechecking at send time also covers a state change during placement.
         if not self:PrepareTargetFilter(r) then
@@ -6694,7 +6718,7 @@ return function(cursor,env)
             return result
         end
         if not r.rootAt then self:SamplePlayer() end
-        if not self:valid(r,r.prevalidateWorldCast) then return false end
+        if not self:valid(r,r.prevalidatedWorld) then return false end
         local proxy=setmetatable({CastPos=r.target,IsTarget=r.target and r.target.pos~=nil},{__index=self})
         r.ggCompatible=self.GGCompatible
         r.hold=r.ggCompatible and env.fallback() or self.Timing:hold(r.class,r.critical)
@@ -6720,7 +6744,7 @@ return function(cursor,env)
             r.playerScreen=copy(r.returnTarget or self.PlayerScreen);r.playerWorld=copy(self.PlayerWorld)
         end
         if not self:valid(r) or self:InputsBlocked(r) then r.state='aborted';r.abortedAt=env.clock();return false end
-        if r.prevalidateWorldCast then
+        if r.prevalidatedWorld then
             self:PrepareWorldCommit(r)
             -- The final validator can take time; project the validated world
             -- intent again before the warp, never run it after positioning.
@@ -6761,17 +6785,10 @@ return function(cursor,env)
             if r.aimCandidates then return self:FailAim(r,'aim_position_mismatch') end
             self:release('position unconfirmed');return false
         end
-        if r.ggCompatible and not r.resolveWorldTarget then
-            -- v27 checked placement before GG's own positioning call. Keep both
-            -- calls inside this owner so the original player position survives.
-            -- Resolved world casts already use a freshly projected, confirmed
-            -- position above. Repeating the native warp adds no evidence.
-            if not self:SetPosition(self.ActionScreen,'action') or not near(env.screen(),self.ActionScreen) then
-                if r.onAimFailure then return self:FailAim(r,'aim_position_mismatch') end
-                self:release('GG-compatible positioning declined');return false
-            end
-        end
-        if env.deferMoves and not r.ggCompatible and r.class=='move' then
+        -- Placement has just been confirmed above. A duplicate native warp to
+        -- the same pixel adds no evidence. Final validation and the full
+        -- configured post-send hold still apply in both timing modes.
+        if env.deferMoves and not r.ggCompatible and r.class=='move' and not r.prevalidateWorldMove then
             r.deferredMove=true;r.awaitingPosition=true;r.sendAfter=env.clock()+env.fallback()
             self.Timer=r.budgetEnd-r.hold
             self:record('position_requested',r);return true
@@ -6798,7 +6815,7 @@ return function(cursor,env)
         -- the final gameplay and cursor checks immediately before sending.
         if r.resolveWorldTarget and not placementFresh and not self:RefreshWorldPlacement(r) then return self.Active==r end
         r.awaitingPosition=nil;r.positionedAt=env.clock()
-        if self.DiagnosticsEnabled~=false and not r.prevalidateWorldCast then r.screenAtSend=copy(env.screen());r.worldAtSend=copy(env.world()) end
+        if self.DiagnosticsEnabled~=false and not r.prevalidatedWorld then r.screenAtSend=copy(env.screen());r.worldAtSend=copy(env.world()) end
         local pressed,result=pcall(self.StepPressKey,self)
         if self.Active~=r then return false end
         if r.sentAt then
@@ -6907,6 +6924,28 @@ return function(cursor,env)
         r.keys={key};r.target=target;r.targetID=target and (target.networkID or target.handle)
         return self:dispatch(r)
     end
+    function cursor:MoveAtCursor()
+        -- Only the no-argument Control.Move path uses this. Explicit world
+        -- targets, attacks and plugin movement retain positioned dispatch.
+        if self.Resolving or self.Step>0 or self.Active or self.PendingReturn
+            or self.Uncertain or env.clock()<self.NotBefore or not self:Available() then return false end
+        self:SamplePlayer()
+        if self.Step>0 or self.Active or self.PendingReturn or self.Uncertain then return false end
+        local p=copy(env.screen());local world=copy(env.world())
+        if not p or not world or not near(p,self.PlayerScreen) then return false end
+        local bounds=env.resolution and env.resolution()
+        if not finite(p.x) or not finite(p.y) or bounds and (p.x<0 or p.y<0 or p.x>=bounds.x or p.y>=bounds.y) then return false end
+        local r=self:newAction({owner='orbwalker',keys={env.moveKey},target=world,critical=false,class='move'})
+        r.pointerMove=true;r.publicType='move';r.hold=0;r.ggCompatible=false
+        r.rootAt=env.clock();r.budgetEnd=r.expires;r.acquiredAt=r.rootAt
+        r.playerScreen=copy(p);r.playerWorld=copy(world);r.actionScreen=copy(p)
+        r.beforePath=copy(env.hero.pathing and env.hero.pathing.endPos);r.origin=copy(env.hero.pos)
+        self.Active=r;self.Step=1;self.ActionScreen=copy(p);self.correctedCastPos=copy(p)
+        local ok=self:SendPositioned(r,true)
+        if self.Active==r then self:release(ok and 'current_cursor_click_complete' or r.reason or 'current_cursor_click_uncertain') end
+        self.LastActionID=r.id
+        return ok
+    end
     function cursor:release(reason)
         local r=self.Active;if not r then return end
         if r.followup then
@@ -6917,6 +6956,13 @@ return function(cursor,env)
         self:CleanupButtons(false,r.owner)
         r.reason=reason
         if not r.sentAt then r.state='aborted';r.abortedAt=env.clock() end
+        if r.pointerMove then
+            -- There was no warp, therefore no return or positioning hold exists.
+            -- Failed mouse-up stays owned in Buttons for bounded cleanup.
+            r.releasedAt=env.clock();self.Step=0;self.ForceTCOUp=false
+            self.NotBefore=env.clock();self.Timer=self.NotBefore
+            self:record('released',r,reason);return
+        end
         for key,owner in pairs(self.KeysOwned) do if owner==r.owner then self:ReleaseKey(key,owner) end end
         r.returnRequestedAt=env.clock()
         r.returnTarget=copy(r.returnTarget or self.PlayerScreen);r.returnBefore=copy(env.screen());r.returnGeneration=self.Generation
@@ -7326,8 +7372,13 @@ return function(input, clock)
     end
     function input:RefreshWorldPlacement(r)
         if not r.resolveWorldTarget then return true end
+        if r.prevalidateWorldMove and self.Active==r then
+            -- A delayed move needs a new preparation outside cursor ownership.
+            -- Never invoke its route resolver while holding the physical cursor.
+            self:release('prepared_move_reprepare_required');return false
+        end
         if not self:ResolveWorld(r) or not self:valid(r) then self:release(r.reason or 'world_resolution_declined');return false end
-        if r.prevalidateWorldCast then self:PrepareWorldCommit(r) end
+        if r.prevalidatedWorld then self:PrepareWorldCommit(r) end
         if clock()>r.expires then self:release('expired');return false end
         if clock()>=r.budgetEnd-r.hold then
             self.Timing:observePreparation(r,clock(),true)
@@ -8672,7 +8723,7 @@ Callback.Add("Load", function()
 	end
 end)
 
-SDK.OrbamaVersion='Orbama-lua-45'
+SDK.OrbamaVersion='Orbama-lua-47'
 SDK.Input=Cursor
 SDK.OnMaintenance={}
 SDK.GetPlayerPosition=function()return Cursor:GetPlayerPosition()end
@@ -8780,7 +8831,7 @@ return function(input, clock, selectCandidate)
             priorities={'critical','interactive','normal','background'},scopes=true,sequences=true,
             aimCandidates=true,aimFallback=true,maxAimCandidates=5,retryKeys=true,observations=true,keyedMechanicalObservation=true,maxWaitingPerScope=32,maxWaiting=128,
             attackApproach=type(input.env.executeApproach)=='function',
-            independentMotion=false,withholdInput=false,hideCursor=false,survivePointerMotion=true,surviveMovementCommands=true,resolveWorldTarget=true,prevalidateWorldCast=true,worldCommitMaxMs=20,automationClaims=true,automationFunctions={"cleanse","qss"}}
+            independentMotion=false,withholdInput=false,hideCursor=false,survivePointerMotion=true,surviveMovementCommands=true,resolveWorldTarget=true,prevalidateWorldCast=true,prevalidateWorldMove=true,worldCommitMaxMs=20,automationClaims=true,automationFunctions={"cleanse","qss"}}
     end
     function api:GetAvailability()
         return {available=input:Available() and not input.Uncertain,busy=input.Active~=nil or input.Step>0,
@@ -8999,11 +9050,15 @@ return function(input, clock, selectCandidate)
         if q.type=='chord' and #keys~=2 then return nil,'invalid_chord' end
         if q.dependency then local d=self.actions[q.dependency];if not d or d.scope~=scope then return nil,'invalid_dependency' end end
         if q.dependencyState and q.dependencyState~='sent' and q.dependencyState~='mechanical' and q.dependencyState~='effect' then return nil,'invalid_dependency_state' end
-        if q.resolveWorldTarget~=nil and (type(q.resolveWorldTarget)~='function' or q.type~='cast' or q.targetKind~='world' or q.world or q.handoff) then return nil,'invalid_world_resolver' end
+        if q.resolveWorldTarget~=nil and (type(q.resolveWorldTarget)~='function' or (q.type~='cast' and q.type~='move') or q.targetKind~='world' or q.world or q.handoff) then return nil,'invalid_world_resolver' end
         if q.prevalidateWorldCast~=nil and (type(q.prevalidateWorldCast)~='boolean'
-            or q.prevalidateWorldCast and (not q.resolveWorldTarget or #keys~=1 or q.verifyTarget
+            or q.prevalidateWorldCast and (q.type~='cast' or not q.resolveWorldTarget or #keys~=1 or q.verifyTarget
                 or q.aimCandidates or q.dependency or q.handoff)) then return nil,'invalid_prevalidated_cast' end
-        if q.commitGuard~=nil and (not q.prevalidateWorldCast or type(q.commitGuard)~='function') then return nil,'invalid_commit_guard' end
+        if q.prevalidateWorldMove~=nil and (type(q.prevalidateWorldMove)~='boolean'
+            or q.prevalidateWorldMove and (q.type~='move' or not q.resolveWorldTarget or #keys~=0
+                or q.verifyTarget or q.aimCandidates or q.dependency or q.handoff)) then return nil,'invalid_prevalidated_move' end
+        if q.type=='move' and q.resolveWorldTarget and not q.prevalidateWorldMove then return nil,'prepared_move_required' end
+        if q.commitGuard~=nil and (not (q.prevalidateWorldCast or q.prevalidateWorldMove) or type(q.commitGuard)~='function') then return nil,'invalid_commit_guard' end
         if q.ready and type(q.ready)~='function' then return nil,'invalid_condition' end
         if q.aimCandidates and (type(q.aimCandidates)~='function' or q.targetKind~='object') then return nil,'invalid_aim_candidates' end
         if q.aimFallback and (type(q.aimFallback)~='function' or not q.aimCandidates) then return nil,'invalid_aim_fallback' end
@@ -9027,7 +9082,8 @@ return function(input, clock, selectCandidate)
             end
         end
         r.resolveWorldTarget=q.resolveWorldTarget;r.intentTargetID=q.intentTargetID
-        r.prevalidateWorldCast=q.prevalidateWorldCast==true;r.commitGuard=q.commitGuard
+        r.prevalidateWorldCast=q.prevalidateWorldCast==true;r.prevalidateWorldMove=q.prevalidateWorldMove==true
+        r.prevalidatedWorld=r.prevalidateWorldCast or r.prevalidateWorldMove;r.commitGuard=q.commitGuard
         r.publicScope=scope;r.priorityClass=p;r.publicType=q.type;r.approach=q.approach==true
         r.surviveMovementCommands=q.surviveMovementCommands==true
         r.survivePointerMotion=q.survivePointerMotion==true or r.surviveMovementCommands
@@ -9265,7 +9321,7 @@ transports["gg"]=(function()
 return function(g,sdk,active,options)
     assert(not sdk.OrbamaVersion,'Original GG required')
     local A={falseIsRejection=options.ggFalseIsRejection~=false,name='OriginalGG',queue={},records={},serial=0,history={},caps={
-        surviveMovementCommands=false,resolveWorldTarget=false,automationClaims=false,
+        surviveMovementCommands=false,resolveWorldTarget=false,automationClaims=false,prevalidateWorldCast=false,prevalidateWorldMove=false,
         cancelSubmitted=false,observedExecution=false,privateQueue=true,updatePriority=true}}
     sdk.ActionClientGG=sdk.ActionClientGG or {};local providers=sdk.ActionClientGG;providers[#providers+1]=A
     local rank={critical=4,interactive=3,normal=2,background=1}
@@ -9278,7 +9334,7 @@ return function(g,sdk,active,options)
     function A:Capabilities() return self.caps end
     function A:Available() return not sdk.Cursor or sdk.Cursor.Step==0 end
     function A:Submit(q)
-        for _,name in ipairs({'verifyTarget','aimCandidates','aimFallback','retryKey','world','count','approach','handoff','survivePointerMotion'})do
+        for _,name in ipairs({'verifyTarget','aimCandidates','aimFallback','retryKey','world','count','approach','handoff','survivePointerMotion','prevalidateWorldCast','prevalidateWorldMove','commitGuard'})do
             if q[name]~=nil and q[name]~=false then return nil,'GG_unsupported_option:'..name end
         end
         if q.type~='cast' and q.type~='attack' and q.type~='move' then return nil,'GG_unsupported_type' end
@@ -9403,7 +9459,8 @@ return function(g, sdk, active, options)
     local capabilities=api:GetCapabilities()
     local scope=assert(api:RegisterScope(options.name,{priorities={'critical','interactive','normal','background'}}))
     -- Only capabilities exposed by this facade, not unrelated raw-scope methods.
-    local clientCaps={surviveMovementCommands=capabilities.surviveMovementCommands,
+    local clientCaps={prevalidateWorldCast=capabilities.prevalidateWorldCast,prevalidateWorldMove=capabilities.prevalidateWorldMove,
+        worldCommitMaxMs=capabilities.worldCommitMaxMs,surviveMovementCommands=capabilities.surviveMovementCommands,
         survivePointerMotion=capabilities.survivePointerMotion,resolveWorldTarget=capabilities.resolveWorldTarget,
         automationClaims=capabilities.automationClaims,automationFunctions=capabilities.automationFunctions,
         actionCleanupState=capabilities.actionCleanupState,aimCandidates=capabilities.aimCandidates,
@@ -9420,7 +9477,8 @@ return function(g, sdk, active, options)
             dependency=intent.dependency,dependencyState=intent.dependencyState,ready=intent.ready,handoff=intent.handoff,
             verifyTarget=intent.verifyTarget,aimCandidates=intent.aimCandidates,aimFallback=intent.aimFallback,
             retryKey=intent.retryKey,world=intent.world,count=intent.count,approach=intent.approach,
-            survivePointerMotion=intent.survivePointerMotion,
+            survivePointerMotion=intent.survivePointerMotion,prevalidateWorldCast=intent.prevalidateWorldCast,
+            prevalidateWorldMove=intent.prevalidateWorldMove,commitGuard=intent.commitGuard,
             validate=function(_,resolved)if not active() then return false,'inactive_instance' end;return intent.mechanical(resolved) end}
         -- An independent resolved skillshot keeps its gameplay target while the
         -- player orbwalks. Opt into the provider's bounded correction centrally;
@@ -9520,10 +9578,44 @@ return function(g,transports,options)
     function C:Now()return transport:Now()end
     function C:Capabilities()
         local c=copy(transport:Capabilities());c.contexts=true;c.resources=true;c.replaceUnsent=true
-        c.observationTracking=true;c.boundedHistory=true;c.scopedConditions=true;c.sharedClientVersion=1
+        c.observationTracking=true;c.boundedHistory=true;c.scopedConditions=true;c.sharedClientVersion=1;c.emergencyResourceRelease=true
         return c
     end
     function C:Available()return transport:Available()end
+    function C:RegisterEmergencyYield(callback)
+        if self.closed or self.resolving or type(callback)~='function'then return false end
+        self.emergencyYield=callback;return true
+    end
+    function C:CooperateWithEvade(policy)
+        if self.closed or self.resolving or type(policy)~='table'or type(policy.committed)~='function'
+            or type(policy.yield)~='function'then return false end
+        self.evadePolicy=policy;return true
+    end
+    function C:YieldUnsent(resource)
+        if self.closed or self.resolving then return false end
+        for id,q in pairs(self.jobs)do if not resource or q.resource==resource then
+            local r=self:Poll(id)
+            if r and not r.sentAt then self:Cancel(id,'evade_emergency');self:Finish(id)end
+        end end
+        if resource then return hub.resources[resource]==nil end
+        return true
+    end
+    function C:RequestEmergencyRelease(resource,evidence)
+        if self.closed or self.resolving or type(evidence)~='table' or evidence.likelyDeath~=true
+            or type(evidence.expires)~='number' or evidence.expires<self:Now()
+            or evidence.expires>self:Now()+250 then return false,'emergency_evidence_required'end
+        local lease=hub.resources[resource]
+        if not lease then return true end
+        local owner=lease.client
+        if owner==self then return false,'already_owned'end
+        local record=owner:Poll(lease.id)
+        if not record or record.sentAt or record.cleanupPending then return false,'resource_in_flight'end
+        if not owner.emergencyYield then return false,'owner_declined'end
+        local ok,accepted=pcall(owner.emergencyYield,resource,copy(evidence),lease.id)
+        if not ok or accepted~=true then return false,'owner_declined'end
+        -- Only the owner can cancel and release. A callback's true is not release.
+        return hub.resources[resource]==nil,hub.resources[resource]and 'owner_release_pending' or nil
+    end
     function C:IsSending()return transport.sending==true end
     function C:Condition(owner,name,condition,exceptions)
         if self.resolving then return false,'resolver_side_effect'end
@@ -9536,6 +9628,7 @@ return function(g,transports,options)
 if self.gates[token]then self.gates[token]=nil;return true end;return false end
     function C:ContextValid(q,phase)
         if self.closed or not active() or g.myHero.dead or g.Game.IsChatOpen() or not g.Game.IsOnTop() then return false,'context_unavailable' end
+        if self.evadePolicy and sdk.Evade and type(sdk.Evade.Evading)=='function' and sdk.Evade:Evading()and not q.evadeCompatible then return false,'evade_intervention'end
         local c=q.context
         if c then
             if c.modes then local yes=false;for _,mode in ipairs(c.modes)do if sdk.Orbwalker.Modes[mode]then yes=true end end;if not yes then return false,'mode_ended' end end
@@ -9720,4 +9813,4 @@ function SDK.Actions:CreateClient(options)return createActionClient(_G,options)e
 _G.Orbama=SDK
 return SDK
 
-end,5)
+end,6)
