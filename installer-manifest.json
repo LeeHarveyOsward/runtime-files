@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "repository": "LeeHarveyOsward/runtime-files",
+  "release": "5",
+  "packages": [
+    {
+      "id": "orbama",
+      "name": "Orbama",
+      "version": "5",
+      "depends": [],
+      "enable": [
+        "Orbama.lua"
+      ],
+      "disable": [
+        "GGOrbwalker.lua"
+      ],
+      "files": [
+        {
+          "source": "Orbama.lua",
+          "destination": "LOLEXT/Scripts/Orbama.lua",
+          "sha256": "e36e2189baf51a88e71ab776df95e1deb00a38b7e84a3f2b82c88c02508c309b",
+          "size": 514243
+        }
+      ]
+    },
+    {
+      "id": "lho",
+      "name": "LeeHarveyOsward (Lee Sin)",
+      "version": "5",
+      "depends": [
+        "orbama"
+      ],
+      "enable": [
+        "LeeHarveyOsward.lua"
+      ],
+      "disable": [],
+      "files": [
+        {
+          "source": "LeeHarveyOsward.lua",
+          "destination": "LOLEXT/Scripts/LeeHarveyOsward.lua",
+          "sha256": "902646e497b7a9e44872ddc34ef4fa7e899320dab7697f1e3cbf01db6bc49114",
+          "size": 814781
+        }
+      ]
+    },
+    {
+      "id": "classic",
+      "name": "ClassicAIO for Orbama (Classic mode)",
+      "version": "5",
+      "depends": [
+        "orbama"
+      ],
+      "enable": [
+        "ClassicAIO_Orbama.lua"
+      ],
+      "disable": [
+        "ClassicAIO.lua",
+        "ClassicAIOv2.lua"
+      ],
+      "files": [
+        {
+          "source": "ClassicAIO_Orbama.lua",
+          "destination": "LOLEXT/Scripts/ClassicAIO_Orbama.lua",
+          "sha256": "384a86b8b8923b3be6cd00c8eab4837762f13f92db6f5963ac30922a2470cd23",
+          "size": 430079
+        }
+      ]
+    }
+  ]
+}

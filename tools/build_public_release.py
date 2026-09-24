@@ -141,6 +141,13 @@ def build():
     for name in ('build_public_release.py','build_orbama_lua.py','build_lho.py','build_classic_v2.py','build_gg_test.py','build_action_client.py','orbama_patches.py'):
         files['tools/'+name]=(ROOT/'tools'/name).read_bytes()
     files['reference/GGOrbwalker-3.075.lua']=(ROOT/'reference/GGOrbwalker-3.075.lua').read_bytes()
+    from build_installer_manifest import installer_files
+    files.update(installer_files(files, VERSION))
+    files['tools/build_installer_manifest.py']=(ROOT/'tools/build_installer_manifest.py').read_bytes()
+    for name in ('install.ps1','INSTALL.md','README.md'):
+        files['installer/'+name]=(ROOT/'installer'/name).read_bytes()
+    for name in ('installer_spec.ps1','run_installer.py'):
+        files['tests/'+name]=(ROOT/'tests'/name).read_bytes()
     for name,data in files.items():
         path=OUT/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data)
     return files
