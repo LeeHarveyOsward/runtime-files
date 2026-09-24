@@ -1,6 +1,6 @@
 # Runtime scripts
 
-Install Orbama, LeeHarveyOsward, or ClassicAIO for Orbama by pressing **Win+R** and
+Install all scripts by pressing **Win+R** and
 pasting:
 
 ```powershell
